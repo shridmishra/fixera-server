@@ -5,6 +5,7 @@ import errorHandler from './handlers/error';
 import connectDB from './config/db';
 import authRouter from './routes/Auth';
 import { protect } from './middlewares/auth';
+import userRouter from './routes/User';
 // Initialize environment variables
 dotenv.config();
 
@@ -32,6 +33,7 @@ const startServer = async () => {
     });
 
     app.use('/api/auth', authRouter);
+    app.use('/api/user', userRouter);
    
     app.use(errorHandler);
 
