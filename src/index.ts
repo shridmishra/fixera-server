@@ -1,56 +1,65 @@
-import express, { Express, Request, Response } from 'express';
+import express, { Express, Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
-import errorHandler from './handlers/error';
-import connectDB from './config/db';
-import authRouter from './routes/Auth';
-import { protect } from './middlewares/auth';
-import userRouter from './routes/User';
 import cookieParser from 'cookie-parser';
-// Initialize environment variables
+import errorHandler from './handlers/error';
+import connectDB from './config/db'; // Using the robust connectDB
+import authRouter from './routes/Auth';
+import userRouter from './routes/User';
+
 dotenv.config();
 
 const app: Express = express();
-const port = process.env.PORT || 3000;
 
-const startServer = async () => {
+app.use(async (req: Request, res: Response, next: NextFunction) => {
   try {
-
     await connectDB();
-
-    app.use(cors({
-      origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-      credentials: true, // This is crucial for cookies
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization']
-    }));        
-    app.use(express.json());
-    app.use(cookieParser())
-    app.get('/', (req: Request, res: Response) => {
-      res.json({
-        message: 'Fixera API Server is running',
-        status: 'Up',
-        version: '1.0.0',
-      });
-    });
-
-    app.get('/health', (req: Request, res: Response) => {
-      res.status(200).json({ status: "UP" });
-    });
-
-    app.use('/api/auth', authRouter);
-    app.use('/api/user', userRouter);
-   
-    app.use(errorHandler);
-
-    app.listen(port, () => {
-      console.log(`🚀 Server running on http://localhost:${port}`);
-    });
-
+    next();
   } catch (error) {
-    console.error('💀 Failed to connect to the database:', error);
-    process.exit(1); 
+    console.error('Database connection failed on request:', error);
+    // Stop the request if the database connection fails
+    res.status(500).json({
+      message: 'Internal Server Error: Could not connect to the database.',
+    });
   }
-};
+});
 
-startServer();
+// CORS configuration
+app.use(cors({
+  origin: process.env.FRONTEND_URL,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// Body and cookie parsers
+app.use(express.json());
+app.use(cookieParser());
+
+
+// --- API Routes ---
+
+// Health check and root routes
+app.get('/', (req: Request, res: Response) => {
+  res.json({
+    message: 'Fixera API Server is running',
+    status: 'Up',
+    version: '1.0.0',
+  });
+});
+
+app.get('/health', (req: Request, res: Response) => {
+  res.status(200).json({ status: "UP" });
+});
+
+// Your application's main routes
+app.use('/api/auth', authRouter);
+app.use('/api/user', userRouter);
+
+
+// --- Error Handler ---
+// This should be the last piece of middleware
+app.use(errorHandler);
+
+// Export the configured app for Vercel
+export default app;
