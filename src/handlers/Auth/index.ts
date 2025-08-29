@@ -1,6 +1,5 @@
 import { Request, Response, NextFunction } from "express";
 import User, { IUser } from "../../models/user";
-import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import generateToken from "../../utils/functions";
@@ -66,8 +65,6 @@ export const SignUp = async (req: Request, res: Response, next: NextFunction) =>
         msg: "Invalid role. Must be one of: customer, professional"
       });
     }
-
-    await connecToDatabase();
 
     // Check for existing email
     const existingEmailAddress = await User.findOne({
@@ -206,7 +203,6 @@ export const LogIn = async (req: Request, res: Response, next: NextFunction) => 
       });
     }
 
-    await connecToDatabase();
 
     // Find user with password field
     const userExists: IUser = await User.findOne({
@@ -307,7 +303,6 @@ export const getMe = async (req: Request, res: Response, next: NextFunction) => 
       return res.status(200).json({ success: true, authenticated: false, user: null });
     }
 
-    await connecToDatabase();
     const user = await User.findById(decoded.id).select('-password');
 
     if (!user) {
