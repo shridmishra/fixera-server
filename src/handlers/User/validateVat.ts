@@ -28,6 +28,19 @@ export const validateVAT = async (req: Request, res: Response, next: NextFunctio
     // Validate with VIES API
     const validationResult = await validateVATNumber(formattedVAT);
 
+    // Parse and clean up company address for auto-population
+    let cleanedAddress = null;
+    if (validationResult.companyAddress) {
+      const addressLines = validationResult.companyAddress.split('\n').filter(line => line.trim());
+      cleanedAddress = {
+        fullAddress: validationResult.companyAddress,
+        streetAddress: addressLines[0] || '',
+        city: addressLines[addressLines.length - 1]?.match(/\d{4,5}\s+(.+)$/)?.[1] || '',
+        postalCode: addressLines[addressLines.length - 1]?.match(/(\d{4,5})/)?.[1] || '',
+        country: formattedVAT.substring(0, 2)
+      };
+    }
+
     return res.status(200).json({
       success: true,
       data: {
@@ -35,12 +48,141 @@ export const validateVAT = async (req: Request, res: Response, next: NextFunctio
         valid: validationResult.valid,
         companyName: validationResult.companyName,
         companyAddress: validationResult.companyAddress,
-        error: validationResult.error
+        parsedAddress: cleanedAddress,
+        error: validationResult.error,
+        autoPopulateRecommended: validationResult.valid && (validationResult.companyName || validationResult.companyAddress)
       }
     });
 
   } catch (error: any) {
-    console.error('VAT validation error:', error);
+    return res.status(500).json({
+      success: false,
+      msg: "Failed to validate VAT number"
+    });
+  }
+};
+
+// New endpoint for VAT validation with auto-population
+export const validateAndPopulateVAT = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const token = req.cookies?.['auth-token'];
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        msg: "Authentication required"
+      });
+    }
+
+    let decoded: { id: string } | null = null;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
+    } catch (err) {
+      return res.status(401).json({
+        success: false,
+        msg: "Invalid authentication token"
+      });
+    }
+
+    const { vatNumber, autoPopulate = false } = req.body;
+
+    if (!vatNumber) {
+      return res.status(400).json({
+        success: false,
+        msg: "VAT number is required"
+      });
+    }
+
+    console.log(`💼 PHASE 2: Validating and updating VAT for user - VAT: ${vatNumber}, Auto-populate: ${autoPopulate}`);
+
+    await connecToDatabase();
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        msg: "User not found"
+      });
+    }
+
+    if (user.role !== 'professional') {
+      console.log(`⚠️ PHASE 2: Non-professional user attempting VAT validation - Role: ${user.role}`);
+    }
+
+    const formattedVAT = formatVATNumber(vatNumber);
+
+    // Basic format validation
+    if (!isValidVATFormat(formattedVAT)) {
+      console.log(`❌ PHASE 2: VAT format validation failed for user ${user.email}`);
+      return res.status(400).json({
+        success: false,
+        msg: "Invalid VAT number format"
+      });
+    }
+
+    // Validate with VIES API
+    const validationResult = await validateVATNumber(formattedVAT);
+    
+    // Update VAT information
+    user.vatNumber = formattedVAT;
+    user.isVatVerified = validationResult.valid;
+
+    // Auto-populate company information if requested and available
+    if (autoPopulate && validationResult.valid && user.role === 'professional') {
+      
+      if (!user.businessInfo) {
+        user.businessInfo = {};
+      }
+
+      if (validationResult.companyName && !user.businessInfo.companyName) {
+        user.businessInfo.companyName = validationResult.companyName;
+      }
+
+      if (validationResult.companyAddress) {
+        // Parse address components
+        const addressLines = validationResult.companyAddress.split('\n').filter(line => line.trim());
+        
+        if (!user.businessInfo.address && addressLines[0]) {
+          user.businessInfo.address = addressLines[0];
+        }
+
+        // Extract postal code and city from last line (common EU format)
+        const lastLine = addressLines[addressLines.length - 1];
+        if (lastLine) {
+          const postalMatch = lastLine.match(/(\d{4,5})/);
+          const cityMatch = lastLine.match(/\d{4,5}\s+(.+)$/);
+          
+          if (postalMatch && !user.businessInfo.postalCode) {
+            user.businessInfo.postalCode = postalMatch[1];
+          }
+          
+          if (cityMatch && !user.businessInfo.city) {
+            user.businessInfo.city = cityMatch[1].trim();
+          }
+        }
+
+        // Set country from VAT number
+        if (!user.businessInfo.country) {
+          user.businessInfo.country = formattedVAT.substring(0, 2);
+        }
+      }
+    }
+
+    await user.save();
+    return res.status(200).json({
+      success: true,
+      msg: "VAT validated and information updated successfully",
+      data: {
+        vatNumber: formattedVAT,
+        isVatVerified: validationResult.valid,
+        companyName: validationResult.companyName,
+        companyAddress: validationResult.companyAddress,
+        autoPopulated: autoPopulate && validationResult.valid,
+        businessInfo: user.businessInfo
+      }
+    });
+
+  } catch (error: any) {
     return res.status(500).json({
       success: false,
       msg: "Failed to validate VAT number"

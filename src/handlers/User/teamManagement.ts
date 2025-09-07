@@ -1,0 +1,425 @@
+import { Request, Response, NextFunction } from "express";
+import User, { IUser } from "../../models/user";
+import connecToDatabase from "../../config/db";
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
+import { sendTeamMemberInvitationEmail } from "../../utils/emailService";
+import crypto from 'crypto';
+
+// Generate random password
+const generatePassword = (): string => {
+    return crypto.randomBytes(8).toString('hex');
+};
+
+// Invite team member with email
+export const inviteTeamMember = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const token = req.cookies?.['auth-token'];
+        
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                msg: "Authentication required"
+            });
+        }
+
+        let decoded: { id: string } | null = null;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
+        } catch (err) {
+            return res.status(401).json({
+                success: false,
+                msg: "Invalid authentication token"
+            });
+        }
+
+        await connecToDatabase();
+        const professional = await User.findById(decoded.id);
+
+        if (!professional) {
+            return res.status(404).json({
+                success: false,
+                msg: "Professional not found"
+            });
+        }
+
+        // Check if user is an approved professional
+        if (professional.role !== 'professional' || professional.professionalStatus !== 'approved') {
+            return res.status(403).json({
+                success: false,
+                msg: "Only approved professionals can invite team members"
+            });
+        }
+
+        const { name, email, hasEmail = true } = req.body;
+
+        // Validate required fields
+        if (!name) {
+            return res.status(400).json({
+                success: false,
+                msg: "Team member name is required"
+            });
+        }
+
+        if (hasEmail && !email) {
+            return res.status(400).json({
+                success: false,
+                msg: "Email is required when hasEmail is true"
+            });
+        }
+
+        // If hasEmail is true, check if email already exists
+        if (hasEmail && email) {
+            const existingUser = await User.findOne({ email: email.toLowerCase() });
+            if (existingUser) {
+                return res.status(400).json({
+                    success: false,
+                    msg: "User with this email already exists"
+                });
+            }
+        }
+
+        console.log(`👥 TEAM: Professional ${professional.email} inviting team member: ${name} (hasEmail: ${hasEmail})`);
+
+        let teamMember: IUser;
+        let generatedPassword: string | null = null;
+
+        if (hasEmail && email) {
+            // Create team member with email
+            generatedPassword = generatePassword();
+            const hashedPassword = await bcrypt.hash(generatedPassword, 12);
+
+            teamMember = new User({
+                name: name.trim(),
+                email: email.toLowerCase().trim(),
+                phone: `+1000000${Date.now().toString().slice(-4)}`, // Clean placeholder phone for team members
+                password: hashedPassword,
+                role: 'team_member',
+                isEmailVerified: false,
+                isPhoneVerified: false,
+                teamMember: {
+                    companyId: professional._id.toString(),
+                    invitedBy: professional._id.toString(),
+                    invitedAt: new Date(),
+                    isActive: true,
+                    hasEmail: true,
+                    availabilityPreference: 'personal',
+                    managedByCompany: false
+                }
+            });
+        } else {
+            // Create team member without email (managed by company)
+            teamMember = new User({
+                name: name.trim(),
+                email: `no-email-${Date.now()}@company.local`, // Clean placeholder email
+                phone: `+1000000${Date.now().toString().slice(-4)}`, // Clean placeholder phone for team members
+                password: await bcrypt.hash('temp-password-123', 12), // Temporary password
+                role: 'team_member',
+                isEmailVerified: false,
+                isPhoneVerified: false,
+                teamMember: {
+                    companyId: professional._id.toString(),
+                    invitedBy: professional._id.toString(),
+                    invitedAt: new Date(),
+                    acceptedAt: new Date(), // Auto-accept for non-email members
+                    isActive: true,
+                    hasEmail: false,
+                    availabilityPreference: 'same_as_company',
+                    managedByCompany: true
+                }
+            });
+        }
+
+        await teamMember.save();
+
+        // Send email invitation if team member has email
+        let emailSent = false;
+        if (hasEmail && email && generatedPassword) {
+            try {
+                await sendTeamMemberInvitationEmail(
+                    email,
+                    name,
+                    professional.businessInfo?.companyName || professional.name,
+                    email,
+                    generatedPassword
+                );
+                emailSent = true;
+                console.log(`📧 TEAM: Invitation email sent to ${email}`);
+            } catch (error) {
+                console.error(`❌ TEAM: Failed to send invitation email to ${email}:`, error);
+            }
+        }
+
+        console.log(`✅ TEAM: Team member ${name} invited by ${professional.email} (hasEmail: ${hasEmail})`);
+
+        const responseData: any = {
+            teamMember: {
+                _id: teamMember._id,
+                name: teamMember.name,
+                email: hasEmail ? teamMember.email : undefined,
+                role: teamMember.role,
+                hasEmail: hasEmail,
+                availabilityPreference: teamMember.teamMember?.availabilityPreference,
+                invitedAt: teamMember.teamMember?.invitedAt,
+                isActive: teamMember.teamMember?.isActive
+            },
+            emailSent: emailSent
+        };
+
+        // Include credentials in response for non-email members (for company admin to manage)
+        if (!hasEmail) {
+            responseData.tempCredentials = {
+                email: teamMember.email,
+                password: 'temp-password-123'
+            };
+        }
+
+        res.status(201).json({
+            success: true,
+            msg: hasEmail 
+                ? "Team member invitation sent successfully" 
+                : "Team member added successfully",
+            data: responseData
+        });
+
+    } catch (error) {
+        console.error("❌ TEAM: Error inviting team member:", error);
+        res.status(500).json({
+            success: false,
+            msg: "Internal server error"
+        });
+    }
+};
+
+// Get team members for a professional
+export const getTeamMembers = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const token = req.cookies?.['auth-token'];
+        
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                msg: "Authentication required"
+            });
+        }
+
+        let decoded: { id: string } | null = null;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
+        } catch (err) {
+            return res.status(401).json({
+                success: false,
+                msg: "Invalid authentication token"
+            });
+        }
+
+        await connecToDatabase();
+        const professional = await User.findById(decoded.id);
+
+        if (!professional) {
+            return res.status(404).json({
+                success: false,
+                msg: "Professional not found"
+            });
+        }
+
+        // Check if user is a professional
+        if (professional.role !== 'professional') {
+            return res.status(403).json({
+                success: false,
+                msg: "Only professionals can view team members"
+            });
+        }
+
+        // Get all team members for this professional
+        const teamMembers = await User.find({
+            role: 'team_member',
+            'teamMember.companyId': professional._id.toString(),
+            'teamMember.isActive': true
+        }).select('-password -verificationCode -verificationCodeExpires');
+
+        console.log(`👥 TEAM: Retrieved ${teamMembers.length} team members for ${professional.email}`);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                teamMembers: teamMembers.map(member => ({
+                    _id: member._id,
+                    name: member.name,
+                    email: member.teamMember?.hasEmail ? member.email : undefined,
+                    hasEmail: member.teamMember?.hasEmail,
+                    role: member.role,
+                    availabilityPreference: member.teamMember?.availabilityPreference,
+                    invitedAt: member.teamMember?.invitedAt,
+                    acceptedAt: member.teamMember?.acceptedAt,
+                    isActive: member.teamMember?.isActive,
+                    managedByCompany: member.teamMember?.managedByCompany,
+                    availability: member.availability,
+                    blockedDates: member.blockedDates,
+                    blockedRanges: member.blockedRanges
+                })),
+                totalCount: teamMembers.length
+            }
+        });
+
+    } catch (error) {
+        console.error("❌ TEAM: Error getting team members:", error);
+        res.status(500).json({
+            success: false,
+            msg: "Internal server error"
+        });
+    }
+};
+
+// Update team member status (activate/deactivate)
+export const updateTeamMemberStatus = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const token = req.cookies?.['auth-token'];
+        
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                msg: "Authentication required"
+            });
+        }
+
+        let decoded: { id: string } | null = null;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
+        } catch (err) {
+            return res.status(401).json({
+                success: false,
+                msg: "Invalid authentication token"
+            });
+        }
+
+        await connecToDatabase();
+        const professional = await User.findById(decoded.id);
+
+        if (!professional || professional.role !== 'professional') {
+            return res.status(403).json({
+                success: false,
+                msg: "Only professionals can update team member status"
+            });
+        }
+
+        const { teamMemberId } = req.params;
+        const { isActive } = req.body;
+
+        const teamMember = await User.findOne({
+            _id: teamMemberId,
+            role: 'team_member',
+            'teamMember.companyId': professional._id.toString()
+        });
+
+        if (!teamMember) {
+            return res.status(404).json({
+                success: false,
+                msg: "Team member not found"
+            });
+        }
+
+        teamMember.teamMember!.isActive = isActive;
+        await teamMember.save();
+
+        console.log(`🔄 TEAM: ${professional.email} ${isActive ? 'activated' : 'deactivated'} team member ${teamMember.name}`);
+
+        res.status(200).json({
+            success: true,
+            msg: `Team member ${isActive ? 'activated' : 'deactivated'} successfully`,
+            data: {
+                teamMember: {
+                    _id: teamMember._id,
+                    name: teamMember.name,
+                    isActive: teamMember.teamMember?.isActive
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error("❌ TEAM: Error updating team member status:", error);
+        res.status(500).json({
+            success: false,
+            msg: "Internal server error"
+        });
+    }
+};
+
+// Team member accepts invitation (first login)
+export const acceptInvitation = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { email, password } = req.body;
+
+        if (!email || !password) {
+            return res.status(400).json({
+                success: false,
+                msg: "Email and password are required"
+            });
+        }
+
+        await connecToDatabase();
+        
+        const teamMember = await User.findOne({ 
+            email: email.toLowerCase(),
+            role: 'team_member'
+        }).select('+password');
+
+        if (!teamMember) {
+            return res.status(404).json({
+                success: false,
+                msg: "Team member not found"
+            });
+        }
+
+        const isPasswordValid = await bcrypt.compare(password, teamMember.password!);
+        if (!isPasswordValid) {
+            return res.status(401).json({
+                success: false,
+                msg: "Invalid credentials"
+            });
+        }
+
+        // Mark as accepted if not already
+        if (!teamMember.teamMember?.acceptedAt) {
+            teamMember.teamMember!.acceptedAt = new Date();
+            await teamMember.save();
+        }
+
+        // Generate JWT token
+        const token = jwt.sign(
+            { id: teamMember._id },
+            process.env.JWT_SECRET!,
+            { expiresIn: '7d' }
+        );
+
+        res.cookie('auth-token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        });
+
+        console.log(`✅ TEAM: Team member ${teamMember.name} accepted invitation and logged in`);
+
+        res.status(200).json({
+            success: true,
+            msg: "Login successful",
+            data: {
+                user: {
+                    _id: teamMember._id,
+                    name: teamMember.name,
+                    email: teamMember.email,
+                    role: teamMember.role,
+                    teamMember: teamMember.teamMember
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error("❌ TEAM: Error accepting invitation:", error);
+        res.status(500).json({
+            success: false,
+            msg: "Internal server error"
+        });
+    }
+};

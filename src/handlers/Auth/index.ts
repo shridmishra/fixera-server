@@ -4,7 +4,7 @@ import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import generateToken from "../../utils/functions";
-import { generateOTP, sendOTPEmail } from "../../utils/emailService";
+import { generateOTP, sendOTPEmail, sendWelcomeEmail } from "../../utils/emailService";
 import twilio from 'twilio';
 import mongoose from "mongoose";
 
@@ -114,15 +114,23 @@ export const SignUp = async (req: Request, res: Response, next: NextFunction) =>
       verificationCodeExpires: otpExpiry
     });
 
-    // Kick off OTP sends (email + SMS) in parallel, but await to report status
+    // Kick off OTP sends (email + SMS) and welcome email in parallel, but await to report status
     let emailOtpSent = false;
     let phoneOtpSent = false;
+    let welcomeEmailSent = false;
 
     try {
       console.log(`🔐 Generated EMAIL OTP for signup: ${emailOtp} (${user.email})`);
       emailOtpSent = await sendOTPEmail(user.email, emailOtp, user.name);
     } catch (e) {
       console.error('Error sending email OTP during signup:', e);
+    }
+
+    // Send welcome email after account creation
+    try {
+      welcomeEmailSent = await sendWelcomeEmail(user.email, user.name);
+    } catch (e) {
+      console.error('Error sending welcome email during signup:', e);
     }
 
     try {
@@ -184,7 +192,8 @@ export const SignUp = async (req: Request, res: Response, next: NextFunction) =>
       token, // Also send in response for compatibility
       user: userResponse,
       emailOtpSent,
-      phoneOtpSent
+      phoneOtpSent,
+      welcomeEmailSent
     });
 
   } catch (error: any) {

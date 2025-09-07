@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import User, { IUser } from "../../models/user";
 import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
+import { sendProfessionalApprovalEmail, sendProfessionalRejectionEmail } from "../../utils/emailService";
 
 // Get all professionals pending approval
 export const getPendingProfessionals = async (req: Request, res: Response, next: NextFunction) => {
@@ -195,6 +196,29 @@ export const approveProfessional = async (req: Request, res: Response, next: Nex
         msg: "Professional is already approved"
       });
     }
+    const missingRequirements = [];
+    
+    if (!professional.isVatVerified || !professional.vatNumber) {
+      missingRequirements.push('VAT number validation');
+    }
+    
+    if (!professional.isIdVerified || !professional.idProofUrl) {
+      missingRequirements.push('ID proof verification');
+    }
+
+    if (missingRequirements.length > 0) {
+      return res.status(400).json({
+        success: false,
+        msg: `Cannot approve professional. Missing required verification: ${missingRequirements.join(', ')}`,
+        data: {
+          missingRequirements,
+          hasVat: !!professional.vatNumber,
+          isVatVerified: !!professional.isVatVerified,
+          hasIdProof: !!professional.idProofUrl,
+          isIdVerified: !!professional.isIdVerified
+        }
+      });
+    }
 
     // Update professional status
     professional.professionalStatus = 'approved';
@@ -203,8 +227,12 @@ export const approveProfessional = async (req: Request, res: Response, next: Nex
     professional.rejectionReason = undefined; // Clear any previous rejection reason
     await professional.save();
 
-    console.log(`✅ Admin: Professional ${professional.email} approved by ${adminUser.email}`);
-
+    // Send approval email
+    try {
+      await sendProfessionalApprovalEmail(professional.email, professional.name);
+    } catch (emailError) {
+      console.error(`📧 PHASE 1: Failed to send approval email to ${professional.email}:`, emailError);
+    }
     return res.status(200).json({
       success: true,
       msg: "Professional approved successfully",
@@ -290,7 +318,13 @@ export const rejectProfessional = async (req: Request, res: Response, next: Next
     professional.approvedAt = undefined;
     await professional.save();
 
-    console.log(`❌ Admin: Professional ${professional.email} rejected by ${adminUser.email}`);
+    // Send rejection email
+    try {
+      await sendProfessionalRejectionEmail(professional.email, professional.name, reason.trim());
+    } catch (emailError) {
+      console.error(`📧 PHASE 1: Failed to send rejection email to ${professional.email}:`, emailError);
+      // Don't fail the rejection if email fails
+    }
 
     return res.status(200).json({
       success: true,
@@ -395,6 +429,82 @@ export const suspendProfessional = async (req: Request, res: Response, next: Nex
     return res.status(500).json({
       success: false,
       msg: "Failed to suspend professional"
+    });
+  }
+};
+
+// Verify ID proof for professional
+export const verifyIdProof = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const token = req.cookies?.['auth-token'];
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        msg: "Authentication required"
+      });
+    }
+
+    let decoded: { id: string } | null = null;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
+    } catch (err) {
+      return res.status(401).json({
+        success: false,
+        msg: "Invalid authentication token"
+      });
+    }
+
+    const { professionalId } = req.params;
+
+    await connecToDatabase();
+    const adminUser = await User.findById(decoded.id);
+
+    if (!adminUser || adminUser.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        msg: "Admin access required"
+      });
+    }
+
+    const professional = await User.findOne({
+      _id: professionalId,
+      role: 'professional'
+    });
+
+    if (!professional) {
+      return res.status(404).json({
+        success: false,
+        msg: "Professional not found"
+      });
+    }
+
+    if (!professional.idProofUrl) {
+      return res.status(400).json({
+        success: false,
+        msg: "No ID proof document uploaded"
+      });
+    }
+
+    // Update ID verification status
+    professional.isIdVerified = true;
+    await professional.save();
+    return res.status(200).json({
+      success: true,
+      msg: "ID proof verified successfully",
+      data: {
+        professional: {
+          _id: professional._id,
+          email: professional.email,
+          isIdVerified: professional.isIdVerified
+        }
+      }
+    });
+
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      msg: "Failed to verify ID proof"
     });
   }
 };

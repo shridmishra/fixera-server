@@ -1,6 +1,6 @@
 import { Schema, model, Document } from "mongoose";
 
-export type UserRole = "admin" | "visitor" | "customer" | "professional";
+export type UserRole = "admin" | "visitor" | "customer" | "professional" | "team_member";
 
 export interface IUser extends Document {
     name: string;
@@ -34,6 +34,7 @@ export interface IUser extends Document {
         city?: string;
         country?: string;
         postalCode?: string;
+        timezone?: string;
     };
     hourlyRate?: number;
     currency?: string;
@@ -48,6 +49,12 @@ export interface IUser extends Document {
         sunday?: { available: boolean; startTime?: string; endTime?: string; };
     };
     blockedDates?: Date[];
+    blockedRanges?: {
+        startDate: Date;
+        endDate: Date;
+        reason?: string;
+        createdAt?: Date;
+    }[];
     profileCompletedAt?: Date;
     // Loyalty system fields
     loyaltyPoints?: number;
@@ -55,6 +62,16 @@ export interface IUser extends Document {
     totalSpent?: number;
     totalBookings?: number;
     lastLoyaltyUpdate?: Date;
+    teamMember?: {
+        companyId?: string;
+        invitedBy?: string;
+        invitedAt?: Date;
+        acceptedAt?: Date;
+        isActive?: boolean;
+        hasEmail?: boolean;
+        availabilityPreference?: 'personal' | 'same_as_company';
+        managedByCompany?: boolean; 
+    };
 }
 
 const UserSchema = new Schema<IUser>({
@@ -89,7 +106,7 @@ const UserSchema = new Schema<IUser>({
     },
     role: {
         type: String,
-        enum: ['admin', 'visitor', 'customer', 'professional'],
+        enum: ['admin', 'visitor', 'customer', 'professional', 'team_member'],
         default: 'customer'
     },
 
@@ -166,7 +183,8 @@ const UserSchema = new Schema<IUser>({
         address: { type: String, required: false },
         city: { type: String, required: false },
         country: { type: String, required: false },
-        postalCode: { type: String, required: false }
+        postalCode: { type: String, required: false },
+        timezone: { type: String, required: false, default: 'UTC' }
     },
     hourlyRate: {
         type: Number,
@@ -225,6 +243,12 @@ const UserSchema = new Schema<IUser>({
         type: Date,
         required: false
     }],
+    blockedRanges: [{
+        startDate: { type: Date, required: true },
+        endDate: { type: Date, required: true },
+        reason: { type: String, required: false, maxlength: 200 },
+        createdAt: { type: Date, default: Date.now }
+    }],
     profileCompletedAt: {
         type: Date,
         required: false
@@ -253,6 +277,23 @@ const UserSchema = new Schema<IUser>({
     lastLoyaltyUpdate: {
         type: Date,
         default: Date.now
+    },
+    teamMember: {
+        companyId: { type: String, required: false },
+        invitedBy: { type: String, required: false },
+        invitedAt: { type: Date, required: false },
+        acceptedAt: { type: Date, required: false },
+        isActive: { type: Boolean, default: true },
+        hasEmail: { type: Boolean, default: true },
+        availabilityPreference: { 
+            type: String, 
+            enum: ['personal', 'same_as_company'], 
+            default: 'personal',
+            required: function() {
+                return this.role === 'team_member';
+            }
+        },
+        managedByCompany: { type: Boolean, default: false }
     }
 }, {
     timestamps: true

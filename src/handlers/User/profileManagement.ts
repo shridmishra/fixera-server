@@ -154,7 +154,8 @@ export const updateProfessionalProfile = async (req: Request, res: Response, nex
       currency, 
       serviceCategories, 
       availability,
-      blockedDates 
+      blockedDates,
+      blockedRanges
     } = req.body;
 
     await connecToDatabase();
@@ -183,6 +184,7 @@ export const updateProfessionalProfile = async (req: Request, res: Response, nex
         ...user.businessInfo,
         ...businessInfo
       };
+
     }
 
     if (hourlyRate !== undefined) {
@@ -232,6 +234,37 @@ export const updateProfessionalProfile = async (req: Request, res: Response, nex
       }
       user.blockedDates = blockedDates.map(date => new Date(date));
     }
+    if (blockedRanges) {
+      if (!Array.isArray(blockedRanges)) {
+        return res.status(400).json({
+          success: false,
+          msg: "Blocked ranges must be an array"
+        });
+      }
+      
+      // Validate and convert blocked ranges
+      const validatedRanges = blockedRanges.map(range => {
+        if (!range.startDate || !range.endDate) {
+          throw new Error('Start date and end date are required for blocked ranges');
+        }
+        
+        const startDate = new Date(range.startDate);
+        const endDate = new Date(range.endDate);
+        
+        if (startDate > endDate) {
+          throw new Error('Start date must be before or equal to end date');
+        }
+        
+        return {
+          startDate,
+          endDate,
+          reason: range.reason || undefined,
+          createdAt: new Date()
+        };
+      });
+      
+      user.blockedRanges = validatedRanges;
+    }
 
     // Mark profile as completed if key fields are filled
     if (user.businessInfo?.companyName && user.hourlyRate && user.serviceCategories?.length) {
@@ -263,6 +296,7 @@ export const updateProfessionalProfile = async (req: Request, res: Response, nex
       serviceCategories: user.serviceCategories,
       availability: user.availability,
       blockedDates: user.blockedDates,
+      blockedRanges: user.blockedRanges,
       profileCompletedAt: user.profileCompletedAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt
@@ -279,6 +313,114 @@ export const updateProfessionalProfile = async (req: Request, res: Response, nex
     return res.status(500).json({
       success: false,
       msg: "Failed to update professional profile"
+    });
+  }
+};
+
+// Send profile for verification - PHASE 3 implementation
+export const submitForVerification = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const token = req.cookies?.['auth-token'];
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        msg: "Authentication required"
+      });
+    }
+
+    let decoded: { id: string } | null = null;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
+    } catch (err) {
+      return res.status(401).json({
+        success: false,
+        msg: "Invalid authentication token"
+      });
+    }
+
+    await connecToDatabase();
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        msg: "User not found"
+      });
+    }
+
+    // Check if user is a professional
+    if (user.role !== 'professional') {
+      return res.status(403).json({
+        success: false,
+        msg: "Verification submission is only available for professionals"
+      });
+    }
+
+    // Check current status
+    if (user.professionalStatus === 'approved') {
+      return res.status(400).json({
+        success: false,
+        msg: "Your profile is already approved"
+      });
+    }
+
+    // Check if already pending (prevent multiple submissions)
+    if (user.professionalStatus === 'pending') {
+      return res.status(400).json({
+        success: false,
+        msg: "Your profile is already pending verification. You will be notified within 48 hours."
+      });
+    }
+
+    console.log(`🔍 PHASE 3: Checking verification requirements for ${user.email}`);
+
+    // Check minimum requirements for submission
+    const missingRequirements = [];
+    
+    if (!user.vatNumber) {
+      missingRequirements.push('VAT number');
+    }
+    
+    if (!user.idProofUrl) {
+      missingRequirements.push('ID proof upload');
+    }
+
+    if (!user.businessInfo?.companyName) {
+      missingRequirements.push('Company name');
+    }
+
+    if (missingRequirements.length > 0) {
+      return res.status(400).json({
+        success: false,
+        msg: `Cannot submit for verification. Please complete: ${missingRequirements.join(', ')}`,
+        data: {
+          missingRequirements,
+          hasVat: !!user.vatNumber,
+          hasIdProof: !!user.idProofUrl,
+          hasCompanyName: !!user.businessInfo?.companyName
+        }
+      });
+    }
+
+    // Update status to pending
+    user.professionalStatus = 'pending';
+    user.rejectionReason = undefined; 
+    await user.save();
+    return res.status(200).json({
+      success: true,
+      msg: "Thanks for submitting. Your profile will be checked within 48 hours.",
+      data: {
+        professionalStatus: user.professionalStatus,
+        submittedAt: new Date(),
+        expectedReviewTime: "48 hours"
+      }
+    });
+
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      msg: "Failed to submit profile for verification"
     });
   }
 };
