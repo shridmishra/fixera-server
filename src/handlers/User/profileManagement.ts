@@ -3,6 +3,7 @@ import User, { IUser } from "../../models/user";
 import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
 import { upload, uploadToS3, deleteFromS3, generateFileName, validateFile } from "../../utils/s3Upload";
+import mongoose from 'mongoose';
 
 // Upload ID proof
 export const uploadIdProof = async (req: Request, res: Response, next: NextFunction) => {
@@ -78,7 +79,7 @@ export const uploadIdProof = async (req: Request, res: Response, next: NextFunct
     }
 
     // Generate unique filename
-    const fileName = generateFileName(req.file.originalname, user._id.toString(), 'id-proof');
+    const fileName = generateFileName(req.file.originalname, (user._id as mongoose.Types.ObjectId).toString(), 'id-proof');
 
     // Upload to S3
     const uploadResult = await uploadToS3(req.file, fileName);

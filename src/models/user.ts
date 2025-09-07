@@ -155,10 +155,10 @@ const UserSchema = new Schema<IUser>({
     professionalStatus: {
         type: String,
         enum: ['pending', 'approved', 'rejected', 'suspended'],
-        default: function() {
+        default: function(this: IUser) {
             return this.role === 'professional' ? 'pending' : undefined;
         },
-        required: function() {
+        required: function(this: IUser) {
             return this.role === 'professional';
         }
     },
@@ -289,7 +289,7 @@ const UserSchema = new Schema<IUser>({
             type: String, 
             enum: ['personal', 'same_as_company'], 
             default: 'personal',
-            required: function() {
+            required: function(this: IUser) {
                 return this.role === 'team_member';
             }
         },

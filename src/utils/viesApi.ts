@@ -78,8 +78,8 @@ export const validateVATNumber = async (vatNumber: string): Promise<ViesValidati
 
     const responseData = response.data; 
     // Check what sections exist
-    const nameSection = responseData.match(/<ns2:name[^>]*>(.*?)<\/ns2:name>/s);
-    const addressSection = responseData.match(/<ns2:address[^>]*>(.*?)<\/ns2:address>/s);
+    const nameSection = responseData.match(/<ns2:name[^>]*>([\s\S]*?)<\/ns2:name>/);
+    const addressSection = responseData.match(/<ns2:address[^>]*>([\s\S]*?)<\/ns2:address>/);
 
     if (nameSection) console.log(`🔍 VIES DEBUG: Name content: "${nameSection[1]}"`);
     if (addressSection) console.log(`🔍 VIES DEBUG: Address content: "${addressSection[1]}"`);

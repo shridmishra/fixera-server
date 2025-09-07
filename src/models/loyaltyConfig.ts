@@ -1,4 +1,4 @@
-import mongoose, { Document, Schema } from 'mongoose';
+import mongoose, { Document, Schema, Model } from 'mongoose';
 
 export interface ILoyaltyTier extends Document {
   name: string; // Bronze, Silver, Gold, Platinum
@@ -24,6 +24,10 @@ export interface ILoyaltyConfig extends Document {
   lastModifiedBy: mongoose.Types.ObjectId;
   lastModified: Date;
   version: number; // for tracking config changes
+}
+
+export interface ILoyaltyConfigModel extends Model<ILoyaltyConfig> {
+  getCurrentConfig(): Promise<ILoyaltyConfig>;
 }
 
 const loyaltyTierSchema = new Schema<ILoyaltyTier>({
@@ -128,15 +132,15 @@ loyaltyConfigSchema.pre('save', function(next) {
   // Validate tier ranges don't overlap
   for (let i = 0; i < this.tiers.length - 1; i++) {
     const current = this.tiers[i];
-    const next = this.tiers[i + 1];
+    const nextTier = this.tiers[i + 1];
     
-    if (current.maxSpendingAmount && current.maxSpendingAmount >= next.minSpendingAmount) {
-      return next(new Error(`Tier ${current.name} maxSpendingAmount ($${current.maxSpendingAmount}) overlaps with ${next.name} minSpendingAmount ($${next.minSpendingAmount})`));
+    if (current.maxSpendingAmount && current.maxSpendingAmount >= nextTier.minSpendingAmount) {
+      return next(new Error(`Tier ${current.name} maxSpendingAmount ($${current.maxSpendingAmount}) overlaps with ${nextTier.name} minSpendingAmount ($${nextTier.minSpendingAmount})`));
     }
     
     // Set maxSpendingAmount for current tier if not set
     if (!current.maxSpendingAmount) {
-      current.maxSpendingAmount = next.minSpendingAmount - 0.01;
+      current.maxSpendingAmount = nextTier.minSpendingAmount - 0.01;
     }
   }
   
@@ -247,6 +251,6 @@ loyaltyConfigSchema.statics.getCurrentConfig = async function(): Promise<ILoyalt
   return config;
 };
 
-const LoyaltyConfig = mongoose.model<ILoyaltyConfig>('LoyaltyConfig', loyaltyConfigSchema);
+const LoyaltyConfig = mongoose.model<ILoyaltyConfig, ILoyaltyConfigModel>('LoyaltyConfig', loyaltyConfigSchema);
 
 export default LoyaltyConfig;

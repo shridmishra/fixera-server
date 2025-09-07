@@ -3,6 +3,7 @@ import User, { IUser } from "../../models/user";
 import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
 import { sendProfessionalApprovalEmail, sendProfessionalRejectionEmail } from "../../utils/emailService";
+import mongoose from 'mongoose';
 
 // Get all professionals pending approval
 export const getPendingProfessionals = async (req: Request, res: Response, next: NextFunction) => {
@@ -222,7 +223,7 @@ export const approveProfessional = async (req: Request, res: Response, next: Nex
 
     // Update professional status
     professional.professionalStatus = 'approved';
-    professional.approvedBy = adminUser._id.toString();
+    professional.approvedBy = (adminUser._id as mongoose.Types.ObjectId).toString();
     professional.approvedAt = new Date();
     professional.rejectionReason = undefined; // Clear any previous rejection reason
     await professional.save();

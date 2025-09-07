@@ -8,6 +8,7 @@ import {
   getUserLoyaltyBenefits 
 } from "../../utils/loyaltySystemV2";
 import LoyaltyConfig from "../../models/loyaltyConfig";
+import mongoose from 'mongoose';
 
 // Get user's loyalty status
 export const getLoyaltyStatus = async (req: Request, res: Response, next: NextFunction) => {
@@ -51,7 +52,7 @@ export const getLoyaltyStatus = async (req: Request, res: Response, next: NextFu
 
     // Calculate current loyalty status using V2 system (based on spending)
     const loyaltyStatus = await calculateLoyaltyStatusV2(user.totalSpent || 0, user.loyaltyPoints || 0, user.totalBookings || 0);
-    const benefits = await getUserLoyaltyBenefits(user._id.toString());
+    const benefits = await getUserLoyaltyBenefits((user._id as mongoose.Types.ObjectId).toString());
 
     console.log(`🏆 Loyalty: Retrieved status for ${user.email} - ${loyaltyStatus.level} (${loyaltyStatus.points} points)`);
 
@@ -61,8 +62,8 @@ export const getLoyaltyStatus = async (req: Request, res: Response, next: NextFu
         loyaltyStatus: {
           points: loyaltyStatus.points,
           level: loyaltyStatus.level,
-          nextLevel: loyaltyStatus.nextLevel,
-          nextLevelPoints: loyaltyStatus.nextLevelPoints,
+          nextLevel: loyaltyStatus.nextTier?.name,
+          nextLevelPoints: loyaltyStatus.nextTierPoints,
           progress: loyaltyStatus.progress
         },
         userStats: {
@@ -138,7 +139,7 @@ export const addSpending = async (req: Request, res: Response, next: NextFunctio
     const oldLevel = user.loyaltyLevel || 'Bronze';
 
     // Update loyalty using V2 system
-    const result = await updateUserLoyaltyV2(user._id.toString(), amount, bookingCompleted);
+    const result = await updateUserLoyaltyV2((user._id as mongoose.Types.ObjectId).toString(), amount, bookingCompleted);
 
     if (!result.user) {
       return res.status(500).json({
@@ -235,7 +236,7 @@ export const getLeaderboard = async (req: Request, res: Response, next: NextFunc
       points: customer.loyaltyPoints || 0,
       level: customer.loyaltyLevel || 'Bronze',
       memberSince: customer.createdAt,
-      isCurrentUser: customer._id.toString() === currentUser._id.toString()
+      isCurrentUser: (customer._id as mongoose.Types.ObjectId).toString() === (currentUser._id as mongoose.Types.ObjectId).toString()
     }));
 
     console.log(`🏆 Loyalty: Retrieved leaderboard for ${currentUser.name}`);

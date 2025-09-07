@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { sendTeamMemberInvitationEmail } from "../../utils/emailService";
 import crypto from 'crypto';
+import mongoose from 'mongoose';
 
 // Generate random password
 const generatePassword = (): string => {
@@ -98,8 +99,8 @@ export const inviteTeamMember = async (req: Request, res: Response, next: NextFu
                 isEmailVerified: false,
                 isPhoneVerified: false,
                 teamMember: {
-                    companyId: professional._id.toString(),
-                    invitedBy: professional._id.toString(),
+                    companyId: (professional._id as mongoose.Types.ObjectId).toString(),
+                    invitedBy: (professional._id as mongoose.Types.ObjectId).toString(),
                     invitedAt: new Date(),
                     isActive: true,
                     hasEmail: true,
@@ -118,8 +119,8 @@ export const inviteTeamMember = async (req: Request, res: Response, next: NextFu
                 isEmailVerified: false,
                 isPhoneVerified: false,
                 teamMember: {
-                    companyId: professional._id.toString(),
-                    invitedBy: professional._id.toString(),
+                    companyId: (professional._id as mongoose.Types.ObjectId).toString(),
+                    invitedBy: (professional._id as mongoose.Types.ObjectId).toString(),
                     invitedAt: new Date(),
                     acceptedAt: new Date(), // Auto-accept for non-email members
                     isActive: true,
@@ -234,7 +235,7 @@ export const getTeamMembers = async (req: Request, res: Response, next: NextFunc
         // Get all team members for this professional
         const teamMembers = await User.find({
             role: 'team_member',
-            'teamMember.companyId': professional._id.toString(),
+            'teamMember.companyId': (professional._id as mongoose.Types.ObjectId).toString(),
             'teamMember.isActive': true
         }).select('-password -verificationCode -verificationCodeExpires');
 
@@ -309,7 +310,7 @@ export const updateTeamMemberStatus = async (req: Request, res: Response, next: 
         const teamMember = await User.findOne({
             _id: teamMemberId,
             role: 'team_member',
-            'teamMember.companyId': professional._id.toString()
+            'teamMember.companyId': (professional._id as mongoose.Types.ObjectId).toString()
         });
 
         if (!teamMember) {

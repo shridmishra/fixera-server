@@ -4,6 +4,7 @@ import LoyaltyConfig from "../../models/loyaltyConfig";
 import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
 import { calculateLoyaltyStatusV2 } from "../../utils/loyaltySystemV2";
+import mongoose from 'mongoose';
 
 // Get current loyalty configuration
 export const getLoyaltyConfig = async (req: Request, res: Response, next: NextFunction) => {
@@ -151,7 +152,7 @@ export const updateLoyaltyConfig = async (req: Request, res: Response, next: Nex
     } else {
       config.globalSettings = globalSettings;
       config.tiers = tiers;
-      config.lastModifiedBy = adminUser._id;
+      config.lastModifiedBy = adminUser._id as mongoose.Types.ObjectId;
       config.lastModified = new Date();
     }
 

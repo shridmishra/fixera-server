@@ -3,6 +3,7 @@ import User from "../../models/user";
 import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
+import mongoose from 'mongoose';
 
 // Change password for team members and other users
 export const changePassword = async (req: Request, res: Response, next: NextFunction) => {
@@ -165,7 +166,7 @@ export const resetTeamMemberPassword = async (req: Request, res: Response, next:
         const teamMember = await User.findOne({
             _id: teamMemberId,
             role: 'team_member',
-            'teamMember.companyId': professional._id.toString()
+            'teamMember.companyId': (professional._id as mongoose.Types.ObjectId).toString()
         }).select('+password');
 
         if (!teamMember) {
