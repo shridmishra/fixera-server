@@ -48,7 +48,10 @@ export interface IUser extends Document {
         saturday?: { available: boolean; startTime?: string; endTime?: string; };
         sunday?: { available: boolean; startTime?: string; endTime?: string; };
     };
-    blockedDates?: Date[];
+    blockedDates?: {
+        date: Date;
+        reason?: string;
+    }[];
     blockedRanges?: {
         startDate: Date;
         endDate: Date;
@@ -240,8 +243,8 @@ const UserSchema = new Schema<IUser>({
         }
     },
     blockedDates: [{
-        type: Date,
-        required: false
+        date: { type: Date, required: true },
+        reason: { type: String, required: false, maxlength: 200 }
     }],
     blockedRanges: [{
         startDate: { type: Date, required: true },
