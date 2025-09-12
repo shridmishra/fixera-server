@@ -96,8 +96,8 @@ export const inviteTeamMember = async (req: Request, res: Response, next: NextFu
                 phone: `+1000000${Date.now().toString().slice(-4)}`, // Clean placeholder phone for team members
                 password: hashedPassword,
                 role: 'team_member',
-                isEmailVerified: false,
-                isPhoneVerified: false,
+                isEmailVerified: true, // Team members' email is verified when they accept invitation
+                isPhoneVerified: true, // Team members don't need phone verification
                 teamMember: {
                     companyId: (professional._id as mongoose.Types.ObjectId).toString(),
                     invitedBy: (professional._id as mongoose.Types.ObjectId).toString(),
@@ -116,8 +116,8 @@ export const inviteTeamMember = async (req: Request, res: Response, next: NextFu
                 phone: `+1000000${Date.now().toString().slice(-4)}`, // Clean placeholder phone for team members
                 password: await bcrypt.hash('temp-password-123', 12), // Temporary password
                 role: 'team_member',
-                isEmailVerified: false,
-                isPhoneVerified: false,
+                isEmailVerified: true, // Team members don't require email verification
+                isPhoneVerified: true, // Team members don't require phone verification
                 teamMember: {
                     companyId: (professional._id as mongoose.Types.ObjectId).toString(),
                     invitedBy: (professional._id as mongoose.Types.ObjectId).toString(),

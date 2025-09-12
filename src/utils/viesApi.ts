@@ -76,13 +76,29 @@ export const validateVATNumber = async (vatNumber: string): Promise<ViesValidati
     console.log(`📥 VIES: Response status: ${response.status}`);
     console.log(`📥 VIES: Response received, parsing...`);
 
-    const responseData = response.data; 
+    const responseData = response.data;
+
     // Check what sections exist
     const nameSection = responseData.match(/<ns2:name[^>]*>([\s\S]*?)<\/ns2:name>/);
     const addressSection = responseData.match(/<ns2:address[^>]*>([\s\S]*?)<\/ns2:address>/);
 
-    if (nameSection) console.log(`🔍 VIES DEBUG: Name content: "${nameSection[1]}"`);
-    if (addressSection) console.log(`🔍 VIES DEBUG: Address content: "${addressSection[1]}"`);
+
+    // Also check for alternative namespace patterns
+    const altNameSection = responseData.match(/<name[^>]*>([\s\S]*?)<\/name>/);
+    const altAddressSection = responseData.match(/<address[^>]*>([\s\S]*?)<\/address>/);
+
+    // Check for any other XML elements that might contain address info
+    const allElements = responseData.match(/<[^\/][^>]*>([^<]*)<\/[^>]*>/g);
+    if (allElements) {
+      allElements.forEach((element: string, index: number) => {
+        if (index < 20) { // Limit to first 20 to avoid spam
+          console.log(`  ${index + 1}: ${element}`);
+        }
+      });
+      if (allElements.length > 20) {
+        console.log(`  ... and ${allElements.length - 20} more elements`);
+      }
+    }
 
     // TEST MODE: If testing with specific VAT numbers, provide mock data
     if (vatNumber === 'DE811569869' || vatNumber === 'BE0429259426') {
@@ -102,27 +118,32 @@ export const validateVATNumber = async (vatNumber: string): Promise<ViesValidati
       // Extract company name and address if available - handle multiple formats
       let companyName, companyAddress;
 
-      // Try CDATA format first
-      let nameMatch = responseData.match(/<ns2:name><!\[CDATA\[(.*?)\]\]><\/ns2:name>/);
-      let addressMatch = responseData.match(/<ns2:address><!\[CDATA\[(.*?)\]\]><\/ns2:address>/);
+      // Try CDATA format first (with multiline support)
+      let nameMatch = responseData.match(/<ns2:name><!\[CDATA\[([\s\S]*?)\]\]><\/ns2:name>/);
+      let addressMatch = responseData.match(/<ns2:address><!\[CDATA\[([\s\S]*?)\]\]><\/ns2:address>/);
 
-      // If CDATA not found, try regular text format
+      // If CDATA not found, try regular text format (with multiline support)
       if (!nameMatch) {
-        nameMatch = responseData.match(/<ns2:name>(.*?)<\/ns2:name>/);
+        nameMatch = responseData.match(/<ns2:name>([\s\S]*?)<\/ns2:name>/);
       }
       if (!addressMatch) {
-        addressMatch = responseData.match(/<ns2:address>(.*?)<\/ns2:address>/);
+        addressMatch = responseData.match(/<ns2:address>([\s\S]*?)<\/ns2:address>/);
       }
 
-      // Also try without namespace prefix for some VIES responses
+      // Also try without namespace prefix for some VIES responses (with multiline support)
       if (!nameMatch) {
-        nameMatch = responseData.match(/<name><!\[CDATA\[(.*?)\]\]><\/name>/) || 
-                   responseData.match(/<name>(.*?)<\/name>/);
+        nameMatch = responseData.match(/<name><!\[CDATA\[([\s\S]*?)\]\]><\/name>/) || 
+                   responseData.match(/<name>([\s\S]*?)<\/name>/);
       }
       if (!addressMatch) {
-        addressMatch = responseData.match(/<address><!\[CDATA\[(.*?)\]\]><\/address>/) || 
-                     responseData.match(/<address>(.*?)<\/address>/);
+        addressMatch = responseData.match(/<address><!\[CDATA\[([\s\S]*?)\]\]><\/address>/) || 
+                     responseData.match(/<address>([\s\S]*?)<\/address>/);
       }
+
+      console.log(`🔧 VIES PARSING: nameMatch found:`, !!nameMatch);
+      console.log(`🔧 VIES PARSING: addressMatch found:`, !!addressMatch);
+      if (nameMatch) console.log(`🔧 VIES PARSING: nameMatch[1]:`, JSON.stringify(nameMatch[1]));
+      if (addressMatch) console.log(`🔧 VIES PARSING: addressMatch[1]:`, JSON.stringify(addressMatch[1]));
 
       companyName = nameMatch ? nameMatch[1].trim() : undefined;
       companyAddress = addressMatch ? addressMatch[1].trim() : undefined;

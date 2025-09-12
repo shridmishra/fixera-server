@@ -6,6 +6,7 @@ import {
   approveProfessional,
   rejectProfessional,
   suspendProfessional,
+  reactivateProfessional,
   verifyIdProof,
   getApprovalStats
 } from "../../handlers/Admin/professionalApprovals";
@@ -28,6 +29,7 @@ adminRouter.route('/professionals/:professionalId').get(getProfessionalDetails);
 adminRouter.route('/professionals/:professionalId/approve').put(approveProfessional);
 adminRouter.route('/professionals/:professionalId/reject').put(rejectProfessional);
 adminRouter.route('/professionals/:professionalId/suspend').put(suspendProfessional);
+adminRouter.route('/professionals/:professionalId/reactivate').put(reactivateProfessional);
 adminRouter.route('/professionals/:professionalId/verify-id').put(verifyIdProof);
 adminRouter.route('/stats/approvals').get(getApprovalStats);
 

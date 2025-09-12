@@ -300,6 +300,159 @@ export const sendProfessionalRejectionEmail = async (email: string, professional
   }
 };
 
+// Send professional suspension email
+export const sendProfessionalSuspensionEmail = async (email: string, name: string, reason: string): Promise<boolean> => {
+  try {
+    console.log(`📧 Sending suspension email to ${email}`);
+
+    const emailContent = `
+      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f8fafc; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; padding: 40px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+          
+          ${getEmailHeader("Account Suspension")}
+          
+          <div style="text-align: center; margin-bottom: 30px;">
+            <div style="background: #fee2e2; border: 2px solid #ef4444; border-radius: 50%; width: 80px; height: 80px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
+              <span style="font-size: 36px;">⏸️</span>
+            </div>
+            <h2 style="color: #dc2626; margin: 0; font-size: 24px; font-weight: bold;">Account Suspended</h2>
+          </div>
+          
+          <p style="color: #333; font-size: 16px; line-height: 1.6; margin-bottom: 20px;">
+            Dear <strong>${name}</strong>,
+          </p>
+          
+          <p style="color: #333; line-height: 1.6; margin-bottom: 20px;">
+            We're writing to inform you that your Fixera professional account has been temporarily suspended.
+          </p>
+          
+          <div style="background: #fef3c7; border: 2px solid #f59e0b; border-radius: 8px; padding: 20px; margin: 25px 0;">
+            <h3 style="color: #92400e; margin: 0 0 15px 0; font-size: 18px;">📋 Reason for Suspension</h3>
+            <p style="color: #333; margin: 0; line-height: 1.6; font-style: italic;">
+              "${reason}"
+            </p>
+          </div>
+          
+          <div style="background: #e8f4fd; border: 2px solid #3b82f6; border-radius: 8px; padding: 20px; margin: 25px 0;">
+            <h3 style="color: #1565C0; margin: 0 0 15px 0; font-size: 18px;">🔧 What This Means</h3>
+            <ul style="color: #333; margin: 0; padding-left: 20px; line-height: 1.6;">
+              <li>Your account access has been temporarily disabled</li>
+              <li>You cannot receive new appointments during suspension</li>
+              <li>Existing appointments may be affected</li>
+              <li>You can appeal this decision by contacting support</li>
+            </ul>
+          </div>
+          
+          <div style="background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin: 25px 0;">
+            <h3 style="color: #333; margin: 0 0 15px 0; font-size: 16px;">📞 Need Help?</h3>
+            <p style="color: #666; line-height: 1.6; margin: 0;">
+              If you believe this suspension was made in error or if you'd like to discuss this decision, please contact our support team immediately. We're here to help resolve any issues.
+            </p>
+            <div style="text-align: center; margin-top: 20px;">
+              <a href="mailto:support@fixera.com" 
+                 style="background: #667eea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+                Contact Support
+              </a>
+            </div>
+          </div>
+          
+          <p style="color: #666; line-height: 1.6; margin-top: 30px;">
+            We take these matters seriously and appreciate your understanding. Our team is available to assist you through this process.
+          </p>
+          
+          ${getEmailFooter()}
+        </div>
+      </div>
+    `;
+
+    const emailAPI = createEmailAPI();
+    const sendSmtpEmail = new SendSmtpEmail();
+    sendSmtpEmail.to = [{ email }];
+    sendSmtpEmail.subject = "Fixera Account Suspended - Action Required";
+    sendSmtpEmail.htmlContent = emailContent;
+    sendSmtpEmail.sender = { 
+      name: "Fixera Team", 
+      email: process.env.FROM_EMAIL || "anafariya@gmail.com" 
+    };
+
+    const response = await emailAPI.sendTransacEmail(sendSmtpEmail);
+
+    return true;
+  } catch (error: any) {
+    return false;
+  }
+};
+
+// Send professional unsuspension/reactivation email
+export const sendProfessionalReactivationEmail = async (email: string, name: string): Promise<boolean> => {
+  try {
+    console.log(`📧 Sending reactivation email to ${email}`);
+
+    const emailContent = `
+      <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f8fafc; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; padding: 40px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+          
+          ${getEmailHeader("Account Reactivated")}
+          
+          <div style="text-align: center; margin-bottom: 30px;">
+            <div style="background: #dcfce7; border: 2px solid #16a34a; border-radius: 50%; width: 80px; height: 80px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center;">
+              <span style="font-size: 36px;">✅</span>
+            </div>
+            <h2 style="color: #16a34a; margin: 0; font-size: 24px; font-weight: bold;">Account Reactivated!</h2>
+          </div>
+          
+          <p style="color: #333; font-size: 16px; line-height: 1.6; margin-bottom: 20px;">
+            Dear <strong>${name}</strong>,
+          </p>
+          
+          <p style="color: #333; line-height: 1.6; margin-bottom: 20px;">
+            Great news! Your Fixera professional account has been reactivated and is now fully operational.
+          </p>
+          
+          <div style="background: #dcfce7; border: 2px solid #16a34a; border-radius: 8px; padding: 20px; margin: 25px 0;">
+            <h3 style="color: #15803d; margin: 0 0 15px 0; font-size: 18px;">🎉 You Can Now</h3>
+            <ul style="color: #333; margin: 0; padding-left: 20px; line-height: 1.6;">
+              <li>Access your professional dashboard</li>
+              <li>Receive new appointment requests</li>
+              <li>Manage your schedule and availability</li>
+              <li>Update your professional profile</li>
+            </ul>
+          </div>
+          
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/dashboard" 
+               style="background: #667eea; color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block; font-size: 16px;">
+              Access Your Dashboard
+            </a>
+          </div>
+          
+          <p style="color: #666; line-height: 1.6; margin-top: 30px;">
+            Thank you for your patience during this process. We're excited to have you back on the platform and look forward to your continued success with Fixera.
+          </p>
+          
+          ${getEmailFooter()}
+        </div>
+      </div>
+    `;
+
+    const emailAPI = createEmailAPI();
+    const sendSmtpEmail = new SendSmtpEmail();
+    sendSmtpEmail.to = [{ email }];
+    sendSmtpEmail.subject = "Fixera Account Reactivated - Welcome Back!";
+    sendSmtpEmail.htmlContent = emailContent;
+    sendSmtpEmail.sender = { 
+      name: "Fixera Team", 
+      email: process.env.FROM_EMAIL || "anafariya@gmail.com" 
+    };
+
+    const response = await emailAPI.sendTransacEmail(sendSmtpEmail);
+
+    return true;
+  } catch (error: any) {
+    return false;
+  }
+};
+
 // Send team member invitation email
 export const sendTeamMemberInvitationEmail = async (
   email: string, 

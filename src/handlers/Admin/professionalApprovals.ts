@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import User, { IUser } from "../../models/user";
 import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
-import { sendProfessionalApprovalEmail, sendProfessionalRejectionEmail } from "../../utils/emailService";
+import { sendProfessionalApprovalEmail, sendProfessionalRejectionEmail, sendProfessionalSuspensionEmail, sendProfessionalReactivationEmail } from "../../utils/emailService";
 import mongoose from 'mongoose';
 
 // Get all professionals pending approval
@@ -409,6 +409,15 @@ export const suspendProfessional = async (req: Request, res: Response, next: Nex
     professional.rejectionReason = reason.trim();
     await professional.save();
 
+    // Send suspension email
+    try {
+      await sendProfessionalSuspensionEmail(professional.email, professional.name, reason.trim());
+      console.log(`📧 Admin: Suspension email sent to ${professional.email}`);
+    } catch (emailError) {
+      console.error(`📧 ADMIN: Failed to send suspension email to ${professional.email}:`, emailError);
+      // Don't fail the suspension if email fails
+    }
+
     console.log(`⏸️ Admin: Professional ${professional.email} suspended by ${adminUser.email}`);
 
     return res.status(200).json({
@@ -430,6 +439,97 @@ export const suspendProfessional = async (req: Request, res: Response, next: Nex
     return res.status(500).json({
       success: false,
       msg: "Failed to suspend professional"
+    });
+  }
+};
+
+// Reactivate/Unsuspend professional
+export const reactivateProfessional = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const token = req.cookies?.['auth-token'];
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        msg: "Authentication required"
+      });
+    }
+
+    let decoded: { id: string } | null = null;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
+    } catch (err) {
+      return res.status(401).json({
+        success: false,
+        msg: "Invalid authentication token"
+      });
+    }
+
+    const { professionalId } = req.params;
+
+    await connecToDatabase();
+    const adminUser = await User.findById(decoded.id);
+
+    if (!adminUser || adminUser.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        msg: "Admin access required"
+      });
+    }
+
+    const professional = await User.findOne({
+      _id: professionalId,
+      role: 'professional'
+    });
+
+    if (!professional) {
+      return res.status(404).json({
+        success: false,
+        msg: "Professional not found"
+      });
+    }
+
+    if (professional.professionalStatus !== 'suspended') {
+      return res.status(400).json({
+        success: false,
+        msg: "Professional is not currently suspended"
+      });
+    }
+
+    // Update professional status back to approved
+    professional.professionalStatus = 'approved';
+    professional.rejectionReason = undefined; // Clear suspension reason
+    await professional.save();
+
+    // Send reactivation email
+    try {
+      await sendProfessionalReactivationEmail(professional.email, professional.name);
+      console.log(`📧 Admin: Reactivation email sent to ${professional.email}`);
+    } catch (emailError) {
+      console.error(`📧 ADMIN: Failed to send reactivation email to ${professional.email}:`, emailError);
+      // Don't fail the reactivation if email fails
+    }
+
+    console.log(`▶️ Admin: Professional ${professional.email} reactivated by ${adminUser.email}`);
+
+    return res.status(200).json({
+      success: true,
+      msg: "Professional reactivated successfully",
+      data: {
+        professional: {
+          _id: professional._id,
+          name: professional.name,
+          email: professional.email,
+          professionalStatus: professional.professionalStatus
+        }
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Reactivate professional error:', error);
+    return res.status(500).json({
+      success: false,
+      msg: "Failed to reactivate professional"
     });
   }
 };
