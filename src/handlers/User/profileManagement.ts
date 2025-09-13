@@ -226,16 +226,25 @@ export const updateProfessionalProfile = async (req: Request, res: Response, nex
       };
     }
 
-    if (blockedDates) {
+    if (blockedDates !== undefined) {
       if (!Array.isArray(blockedDates)) {
         return res.status(400).json({
           success: false,
           msg: "Blocked dates must be an array"
         });
       }
-      user.blockedDates = blockedDates.map(date => new Date(date));
+      user.blockedDates = blockedDates.map(item => {
+        if (typeof item === 'string') {
+          return { date: new Date(item) };
+        } else {
+          return {
+            date: new Date(item.date),
+            reason: item.reason || undefined
+          };
+        }
+      });
     }
-    if (blockedRanges) {
+    if (blockedRanges !== undefined) {
       if (!Array.isArray(blockedRanges)) {
         return res.status(400).json({
           success: false,
@@ -243,8 +252,7 @@ export const updateProfessionalProfile = async (req: Request, res: Response, nex
         });
       }
       
-      // Validate and convert blocked ranges
-      const validatedRanges = blockedRanges.map(range => {
+      const validatedRanges = blockedRanges.map((range, index) => {
         if (!range.startDate || !range.endDate) {
           throw new Error('Start date and end date are required for blocked ranges');
         }
@@ -256,12 +264,13 @@ export const updateProfessionalProfile = async (req: Request, res: Response, nex
           throw new Error('Start date must be before or equal to end date');
         }
         
-        return {
+        const processedRange = {
           startDate,
           endDate,
           reason: range.reason || undefined,
           createdAt: new Date()
         };
+        return processedRange;
       });
       
       user.blockedRanges = validatedRanges;

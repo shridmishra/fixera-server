@@ -178,6 +178,7 @@ export const SignUp = async (req: Request, res: Response, next: NextFunction) =>
       serviceCategories: user.serviceCategories,
       availability: user.availability,
       blockedDates: user.blockedDates,
+      blockedRanges: user.blockedRanges,
       profileCompletedAt: user.profileCompletedAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt
@@ -373,6 +374,7 @@ export const getMe = async (req: Request, res: Response, next: NextFunction) => 
       serviceCategories: user.serviceCategories,
       availability: user.availability,
       blockedDates: user.blockedDates,
+      blockedRanges: user.blockedRanges,
       profileCompletedAt: user.profileCompletedAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt
