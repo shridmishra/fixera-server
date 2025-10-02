@@ -121,7 +121,7 @@ const loyaltyConfigSchema = new Schema<ILoyaltyConfig>({
   timestamps: true
 });
 
-// Ensure only one config document exists
+loyaltyConfigSchema.index({ 'tiers.minSpendingAmount': 1 });
 loyaltyConfigSchema.index({}, { unique: true });
 
 // Pre-save middleware to validate tier structure

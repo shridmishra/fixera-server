@@ -53,7 +53,6 @@ const ServiceCategorySchema = new Schema<IServiceCategory>({
     timestamps: true
 });
 
-// Indexes
 ServiceCategorySchema.index({ slug: 1 });
 ServiceCategorySchema.index({ isActive: 1, countries: 1 });
 ServiceCategorySchema.index({ 'services.slug': 1 });

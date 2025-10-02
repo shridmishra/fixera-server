@@ -127,7 +127,7 @@ export const createOrUpdateDraft = async (req: Request, res: Response) => {
         console.log('Response status code: 200');
 
         res.json(project);
-    } catch (error) {
+    } catch (error: any) {
         console.error('❌ AUTO-SAVE ERROR:', error);
         console.error('Error stack:', error.stack);
         res.status(500).json({ error: 'Failed to save project draft', details: error.message });
@@ -274,7 +274,7 @@ export const submitProject = async (req: Request, res: Response) => {
         console.log('Message:', message);
 
         res.json({ message, project });
-    } catch (error) {
+    } catch (error: any) {
         console.error('❌ SUBMIT PROJECT ERROR:', error);
         console.error('Error stack:', error.stack);
         res.status(500).json({ error: 'Failed to submit project', details: error.message });

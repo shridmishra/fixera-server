@@ -10,12 +10,19 @@ import { upload } from "../../utils/s3Upload";
 import { getLoyaltyStatus, addSpending, getLeaderboard } from "../../handlers/User/loyaltyManagement";
 import { inviteTeamMember, getTeamMembers, updateTeamMemberStatus, acceptInvitation } from "../../handlers/User/teamManagement";
 import { changePassword, resetTeamMemberPassword } from "../../handlers/User/passwordManagement";
-import { 
-    updateTeamMemberAvailabilityPreference, 
-    updateTeamMemberAvailability, 
+import {
+    updateTeamMemberAvailabilityPreference,
+    updateTeamMemberAvailability,
     getTeamMemberEffectiveAvailability,
-    updateManagedTeamMemberAvailability 
+    updateManagedTeamMemberAvailability
 } from "../../handlers/User/teamMemberAvailability";
+import {
+    getServiceConfigurationForProfessional,
+    getDynamicFieldsForService,
+    getCategoriesForProfessional,
+    getServicesByCategoryForProfessional,
+    getAreasOfWork
+} from "../../handlers/Professional/serviceConfigurationHandler";
 
 const userRouter = Router();
 
@@ -50,5 +57,12 @@ userRouter.route("/team/availability/preference").put(updateTeamMemberAvailabili
 userRouter.route("/team/availability").put(updateTeamMemberAvailability)
 userRouter.route("/team/availability/effective").get(getTeamMemberEffectiveAvailability)
 userRouter.route("/team/members/:teamMemberId/availability").put(updateManagedTeamMemberAvailability)
+
+// Service Configuration Routes (for Professionals)
+userRouter.route("/service-configuration").get(getServiceConfigurationForProfessional)
+userRouter.route("/service-configuration/dynamic-fields").get(getDynamicFieldsForService)
+userRouter.route("/categories").get(getCategoriesForProfessional)
+userRouter.route("/services/:category").get(getServicesByCategoryForProfessional)
+userRouter.route("/areas-of-work").get(getAreasOfWork)
 
 export default userRouter;

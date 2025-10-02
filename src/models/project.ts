@@ -60,9 +60,16 @@ export interface IIntakeDuration {
     buffer?: number;
 }
 
+export interface IProfessionalInputValue {
+    fieldName: string; // e.g., "buildingType", "range_m2_living_area"
+    value: any; // Can be string, number, or {min: number, max: number} for ranges
+}
+
 export interface ISubproject {
     name: string;
     description: string;
+    projectType: string[];
+    professionalInputs: IProfessionalInputValue[]; // Dynamic fields filled by professional
     pricing: IPricing;
     included: IIncludedItem[];
     materialsIncluded: boolean;
@@ -120,12 +127,12 @@ export interface IProject extends Document {
     category: string;
     service: string;
     areaOfWork?: string;
+    serviceConfigurationId?: string; // Reference to the ServiceConfiguration
     certifications: ICertification[];
     distance: IDistance;
     intakeMeeting?: IIntakeMeeting;
     renovationPlanning?: IRenovationPlanning;
     resources: string[];
-    projectType: string[];
     description: string;
     priceModel: 'fixed' | 'meter' | 'm2' | 'hour' | 'day' | 'room';
     keywords: string[];
@@ -243,10 +250,18 @@ const IntakeDurationSchema = new Schema<IIntakeDuration>({
     buffer: { type: Number, min: 0 }
 });
 
+// Professional Input Value Schema
+const ProfessionalInputValueSchema = new Schema({
+    fieldName: { type: String, required: true },
+    value: { type: Schema.Types.Mixed, required: true }
+});
+
 // Subproject Schema
 const SubprojectSchema = new Schema<ISubproject>({
     name: { type: String, required: true, maxlength: 100 },
     description: { type: String, required: true, maxlength: 500 },
+    projectType: [{ type: String }],
+    professionalInputs: [ProfessionalInputValueSchema],
     pricing: { type: PricingSchema, required: true },
     included: [IncludedItemSchema],
     materialsIncluded: { type: Boolean, default: false },
@@ -311,12 +326,12 @@ const ProjectSchema = new Schema<IProject>({
     category: { type: String, required: true },
     service: { type: String, required: true },
     areaOfWork: { type: String },
+    serviceConfigurationId: { type: String },
     certifications: [CertificationSchema],
     distance: { type: DistanceSchema, required: true },
     intakeMeeting: IntakeMeetingSchema,
     renovationPlanning: RenovationPlanningSchema,
     resources: [{ type: String }],
-    projectType: [{ type: String }],
     description: { type: String, required: true, maxlength: 1300 },
     priceModel: {
         type: String,
@@ -376,10 +391,10 @@ const ProjectSchema = new Schema<IProject>({
     timestamps: true
 });
 
-// Indexes for performance
-ProjectSchema.index({ professionalId: 1, status: 1 });
 ProjectSchema.index({ status: 1, submittedAt: 1 });
-ProjectSchema.index({ category: 1, service: 1 });
+ProjectSchema.index({ professionalId: 1, status: 1 });
+ProjectSchema.index({ professionalId: 1, updatedAt: -1 });
+ProjectSchema.index({ professionalId: 1, autoSaveTimestamp: -1 });
 
 // Pre-save middleware for auto-save timestamp
 ProjectSchema.pre('save', function(next) {

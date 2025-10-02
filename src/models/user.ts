@@ -302,6 +302,14 @@ const UserSchema = new Schema<IUser>({
     timestamps: true
 });
 
+UserSchema.index({ role: 1, professionalStatus: 1 });
+UserSchema.index({ role: 1 });
+UserSchema.index({ role: 1, loyaltyPoints: 1 });
+UserSchema.index({ role: 1, totalSpent: -1 });
+UserSchema.index({ 'teamMember.companyId': 1 });
+UserSchema.index({ email: 1 });
+UserSchema.index({ phone: 1 });
+
 const User = model<IUser>('User', UserSchema);
 
 export default User;
