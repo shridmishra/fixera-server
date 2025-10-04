@@ -88,8 +88,8 @@ function parseDynamicField(fieldText: string): { isDynamic: boolean; field?: any
 
     for (const { regex, unit, fieldName } of patterns) {
         if (regex.test(text)) {
-            // Special case for quantities - use range
-            if (fieldName.includes('Quantity')) {
+            // Special case for quantities and revisions - use range
+            if (fieldName.includes('Quantity') || fieldName === 'designRevisions') {
                 return {
                     isDynamic: true,
                     name: text,
@@ -98,13 +98,14 @@ function parseDynamicField(fieldText: string): { isDynamic: boolean; field?: any
                         fieldType: 'range',
                         unit: unit || 'units',
                         label: text,
-                        isRequired: true,
-                        min: 1
+                        isRequired: fieldName === 'designRevisions' ? false : true,
+                        min: fieldName === 'designRevisions' ? 0 : 1,
+                        max: fieldName === 'designRevisions' ? 10 : undefined
                     }
                 };
             }
 
-            // All other fields including designRevisions are single number fields
+            // All other fields are single number fields
             return {
                 isDynamic: true,
                 name: text,
@@ -113,9 +114,8 @@ function parseDynamicField(fieldText: string): { isDynamic: boolean; field?: any
                     fieldType: 'number',
                     unit,
                     label: text,
-                    isRequired: fieldName === 'designRevisions' ? false : true,
-                    min: 0,
-                    max: fieldName === 'designRevisions' ? 10 : undefined
+                    isRequired: true,
+                    min: 0
                 }
             };
         }
