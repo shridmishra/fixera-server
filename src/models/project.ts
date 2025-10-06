@@ -376,10 +376,11 @@ const ProjectSchema = new Schema<IProject>({
         type: [ServiceSelectionSchema],
         validate: {
             validator: function(v: IServiceSelection[]) {
-                if (!v || v.length === 0) return true; // Optional field
-                return v.length >= 3 && v.length <= 10;
+                // Services array is optional - single service stored in category/service fields
+                if (!v || v.length === 0) return true;
+                return v.length >= 1 && v.length <= 1; // Now only allows 1 service
             },
-            message: 'Services must contain between 3 and 10 items'
+            message: 'Services must contain exactly 1 item'
         }
     },
     certifications: [CertificationSchema],
