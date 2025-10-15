@@ -7,11 +7,11 @@ import Project from "../models/project";
 config();
 
 const DUPLICATE_NAMES = [
-  "Solar PV & battery storage",
+  "Solar PV & Battery Storage",
   "Solar panel & battery",
 ];
 
-const CANONICAL_NAME = "Solar PV & battery storage";
+const CANONICAL_NAME = "Solar PV & Battery Storage";
 
 async function mergeDuplicateSolarServices() {
   const mongoURI = process.env.MONGODB_URI || "mongodb://localhost:27017/fixera";
