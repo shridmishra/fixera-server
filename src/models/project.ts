@@ -184,6 +184,7 @@ export interface IProject extends Document {
   status:
     | "draft"
     | "pending_approval"
+    | "rejected"
     | "published"
     | "on_hold"
     | "quoted"
@@ -446,6 +447,7 @@ const ProjectSchema = new Schema<IProject>(
       enum: [
         "draft",
         "pending_approval",
+        "rejected",
         "published",
         "on_hold",
         "quoted",

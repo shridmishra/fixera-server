@@ -56,7 +56,7 @@ export const rejectProject = async (req: Request, res: Response) => {
         const project = await Project.findOneAndUpdate(
             { _id: id, status: 'pending_approval' },
             {
-                status: 'draft',
+                status: 'rejected',
                 adminFeedback: feedback
             },
             { new: true }

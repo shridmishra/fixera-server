@@ -99,11 +99,23 @@ export const createOrUpdateDraft = async (req: Request, res: Response) => {
       console.log("- Service:", projectData.service);
 
       // Allow updates to existing projects regardless of status for editing
-      const updateData = {
+      const updateData: any = {
         ...projectData,
         autoSaveTimestamp: new Date(),
         updatedAt: new Date(),
       };
+
+      // If a published/on_hold project is edited, move it back to pending_approval for re-approval
+      const shouldMoveToPending = ["published", "on_hold"].includes(
+        (existingProject.status as any) || ""
+      );
+      if (shouldMoveToPending) {
+        updateData.status = "pending_approval";
+        updateData.submittedAt = new Date();
+        updateData.adminFeedback = undefined;
+        updateData.approvedAt = undefined;
+        updateData.approvedBy = undefined;
+      }
 
       console.log("🔧 Update query:", { _id: projectData.id, professionalId });
       console.log("🔧 Update data keys:", Object.keys(updateData));
@@ -417,8 +429,7 @@ export const getProjectsMaster = async (req: Request, res: Response) => {
     const filter: any = { professionalId };
     if (status && status !== "all") {
       if (status === "rejected") {
-        filter.status = "draft";
-        filter.adminFeedback = { $exists: true, $ne: null };
+        filter.status = "rejected";
       } else if (status === "cancelled") {
         filter.status = "closed";
       } else {
@@ -462,8 +473,7 @@ export const getProjectsMaster = async (req: Request, res: Response) => {
         // Derive rejected and cancelled for UI compatibility
         const rejected = await Project.countDocuments({
           professionalId,
-          status: "draft",
-          adminFeedback: { $exists: true, $ne: null },
+          status: "rejected",
         });
         const cancelled = await Project.countDocuments({
           professionalId,
