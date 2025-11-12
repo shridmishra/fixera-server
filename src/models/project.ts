@@ -481,6 +481,10 @@ ProjectSchema.index({ status: 1, submittedAt: 1 });
 ProjectSchema.index({ professionalId: 1, status: 1 });
 ProjectSchema.index({ professionalId: 1, updatedAt: -1 });
 ProjectSchema.index({ professionalId: 1, autoSaveTimestamp: -1 });
+// Text indexes for search functionality
+ProjectSchema.index({ title: 'text', description: 'text' });
+ProjectSchema.index({ category: 1, service: 1 });
+ProjectSchema.index({ status: 1 });
 
 // Pre-save middleware for auto-save timestamp
 ProjectSchema.pre("save", function (next) {
