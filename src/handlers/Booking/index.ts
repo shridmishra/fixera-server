@@ -285,8 +285,9 @@ export const getBookingById = async (req: Request, res: Response, next: NextFunc
     }
 
     // Check authorization - only customer or professional can view
-    const isCustomer = booking.customer._id.toString() === userId;
-    const isProfessional = booking.professional?._id.toString() === userId;
+    const userIdStr = userId?.toString();
+    const isCustomer = booking.customer._id.toString() === userIdStr;
+    const isProfessional = booking.professional?._id.toString() === userIdStr;
 
     if (!isCustomer && !isProfessional) {
       return res.status(403).json({
