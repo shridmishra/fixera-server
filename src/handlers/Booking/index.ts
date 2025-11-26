@@ -3,6 +3,7 @@ import Booking, { IBooking, BookingStatus } from "../../models/booking";
 import User from "../../models/user";
 import Project from "../../models/project";
 import mongoose from "mongoose";
+import { createPaymentIntent } from "../Stripe/payment";
 
 // Create a new booking (RFQ submission)
 export const createBooking = async (req: Request, res: Response, next: NextFunction) => {
@@ -304,6 +305,13 @@ export const getMyBookings = async (req: Request, res: Response, next: NextFunct
     const userId = req.user?._id;
     const { status, page = 1, limit = 20 } = req.query;
 
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        msg: "Authentication required"
+      });
+    }
+
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({
@@ -312,13 +320,29 @@ export const getMyBookings = async (req: Request, res: Response, next: NextFunct
       });
     }
 
-    const query: any = {};
+    let query: any = {};
 
     // Build query based on user role
     if (user.role === 'customer') {
       query.customer = userId;
     } else if (user.role === 'professional') {
-      query.professional = userId;
+
+      // Get all projects and manually filter (workaround for MongoDB query issue)
+      const allProjects = await Project.find({}).select('_id professionalId');
+      const professionalProjects = allProjects.filter(p => {
+        const projProfId = (p as any).professionalId;
+        return projProfId && projProfId.toString() === userId.toString();
+      });
+      const projectIds = professionalProjects.map(p => p._id);
+
+      // Build OR query
+      query = {
+        $or: [
+          { professional: userId }, // Direct professional bookings
+          { project: { $in: projectIds } } // Project bookings for their projects
+        ]
+      };
+
     } else {
       return res.status(403).json({
         success: false,
@@ -326,9 +350,19 @@ export const getMyBookings = async (req: Request, res: Response, next: NextFunct
       });
     }
 
-    // Filter by status if provided
+    // Filter by status if provided (add to query)
     if (status && typeof status === 'string') {
-      query.status = status;
+      if (user.role === 'professional') {
+        // Combine status filter with OR query
+        query = {
+          $and: [
+            query,
+            { status: status }
+          ]
+        };
+      } else {
+        query.status = status;
+      }
     }
 
     const skip = (Number(page) - 1) * Number(limit);
@@ -337,7 +371,7 @@ export const getMyBookings = async (req: Request, res: Response, next: NextFunct
       Booking.find(query)
         .populate('customer', 'name email phone customerType')
         .populate('professional', 'name email businessInfo')
-        .populate('project', 'title description pricing category service')
+        .populate('project', 'title description pricing category service professionalId')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(Number(limit)),
@@ -374,11 +408,14 @@ export const getBookingById = async (req: Request, res: Response, next: NextFunc
       });
     }
 
-    const booking = await Booking.findById(bookingId)
-      .populate('customer', 'name email phone customerType location')
-      .populate('professional', 'name email businessInfo hourlyRate availability')
-      .populate('project', 'title description pricing category service team')
-      .populate('assignedTeamMembers', 'name email');
+    const fetchBookingWithRelations = () =>
+      Booking.findById(bookingId)
+        .populate('customer', 'name email phone customerType location')
+        .populate('professional', 'name email businessInfo hourlyRate availability')
+        .populate('project', 'title description pricing category service team professionalId')
+        .populate('assignedTeamMembers', 'name email');
+
+    let booking = await fetchBookingWithRelations();
 
     if (!booking) {
       return res.status(404).json({
@@ -389,14 +426,40 @@ export const getBookingById = async (req: Request, res: Response, next: NextFunc
 
     // Check authorization - only customer or professional can view
     const userIdStr = userId?.toString();
-    const isCustomer = booking.customer._id.toString() === userIdStr;
-    const isProfessional = booking.professional?._id.toString() === userIdStr;
+    const customerIdStr = booking.customer._id.toString();
+    const isCustomer = customerIdStr === userIdStr;
+
+    // Check if user is the professional (either direct or via project)
+    let isProfessional = false;
+    if (booking.professional) {
+      isProfessional = booking.professional._id.toString() === userIdStr;
+    } else if (booking.project && (booking.project as any).professionalId) {
+      const projectProfId = (booking.project as any).professionalId.toString();
+      isProfessional = projectProfId === userIdStr;
+    }
 
     if (!isCustomer && !isProfessional) {
       return res.status(403).json({
         success: false,
         msg: "You do not have permission to view this booking"
       });
+    }
+
+    // Ensure payment intent exists for customer when quote already accepted
+    const needsPaymentIntent =
+      isCustomer &&
+      ['quote_accepted', 'payment_pending'].includes(booking.status) &&
+      (!booking.payment || !booking.payment.stripeClientSecret || !booking.payment.stripePaymentIntentId);
+
+    if (needsPaymentIntent && userIdStr) {
+      try {
+        const paymentResult = await createPaymentIntent(booking._id.toString(), userIdStr);
+        if (paymentResult.success) {
+          booking = await fetchBookingWithRelations();
+        }
+      } catch (intentError) {
+        console.error('Get booking ensure payment intent error:', intentError);
+      }
     }
 
     return res.status(200).json({
@@ -433,7 +496,14 @@ export const submitQuote = async (req: Request, res: Response, next: NextFunctio
       });
     }
 
-    const booking = await Booking.findById(bookingId);
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        msg: "Authentication required"
+      });
+    }
+
+    const booking = await Booking.findById(bookingId).populate('project', 'professionalId title');
     if (!booking) {
       return res.status(404).json({
         success: false,
@@ -441,8 +511,35 @@ export const submitQuote = async (req: Request, res: Response, next: NextFunctio
       });
     }
 
-    // Check if user is the professional for this booking
-    if (booking.professional?.toString() !== userId) {
+    // Check if user is the professional for this booking (direct or via project)
+    const userIdStr = userId.toString();
+    let isAuthorized = false;
+
+    if (booking.professional) {
+      const profIdStr = booking.professional.toString();
+      isAuthorized = profIdStr === userIdStr;
+      console.log('[SUBMIT QUOTE] Direct professional check:', {
+        bookingProfessional: profIdStr,
+        userId: userIdStr,
+        match: isAuthorized
+      });
+    } else if (booking.project && (booking.project as any).professionalId) {
+      const projectProfId = (booking.project as any).professionalId.toString();
+      isAuthorized = projectProfId === userIdStr;
+      console.log('[SUBMIT QUOTE] Project professional check:', {
+        userId: userIdStr,
+        projectProfessionalId: projectProfId,
+        match: isAuthorized
+      });
+    } else {
+      console.log('[SUBMIT QUOTE] NO professional found!', {
+        hasProfessional: !!booking.professional,
+        hasProject: !!booking.project,
+        projectHasProfessionalId: booking.project ? !!(booking.project as any).professionalId : false
+      });
+    }
+
+    if (!isAuthorized) {
       return res.status(403).json({
         success: false,
         msg: "Only the assigned professional can submit a quote"
@@ -467,7 +564,7 @@ export const submitQuote = async (req: Request, res: Response, next: NextFunctio
       termsAndConditions,
       estimatedDuration,
       submittedAt: new Date(),
-      submittedBy: new mongoose.Types.ObjectId(userId as string)
+      submittedBy: userId
     };
 
     await (booking as any).updateStatus('quoted', userId, 'Quote submitted by professional');
@@ -512,7 +609,11 @@ export const respondToQuote = async (req: Request, res: Response, next: NextFunc
     }
 
     // Check if user is the customer
-    if (booking.customer.toString() !== userId) {
+    const userIdStr = userId?.toString();
+    const customerIdStr = booking.customer.toString();
+    const isCustomer = customerIdStr === userIdStr;
+
+    if (!isCustomer) {
       return res.status(403).json({
         success: false,
         msg: "Only the customer can respond to quotes"
@@ -563,6 +664,13 @@ export const updateBookingStatus = async (req: Request, res: Response, next: Nex
       });
     }
 
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        msg: "Authentication required"
+      });
+    }
+
     const booking = await Booking.findById(bookingId);
     if (!booking) {
       return res.status(404).json({
@@ -571,14 +679,35 @@ export const updateBookingStatus = async (req: Request, res: Response, next: Nex
       });
     }
 
-    // Check authorization
-    const isCustomer = booking.customer.toString() === userId;
-    const isProfessional = booking.professional?.toString() === userId;
+    // Preload project for project bookings (authorization + scheduling)
+    let projectDoc: any = null;
+    if (booking.bookingType === 'project' && booking.project) {
+      projectDoc = await Project.findById(booking.project);
+    }
 
-    if (!isCustomer && !isProfessional) {
+    // Check authorization
+    const userIdStr = userId.toString();
+    const isCustomer = booking.customer.toString() === userIdStr;
+    const isProfessional = booking.professional?.toString() === userIdStr;
+    const isProjectOwner =
+      projectDoc?.professionalId &&
+      projectDoc.professionalId.toString() === userIdStr;
+
+    if (!isCustomer && !isProfessional && !isProjectOwner) {
       return res.status(403).json({
         success: false,
         msg: "You do not have permission to update this booking"
+      });
+    }
+
+    // Only customers (or admins) can mark a booking completed to release escrow
+    const isCompletionRequest = status === 'completed' && booking.status !== 'completed';
+    const userRole = (req.user as any)?.role;
+    const isAdmin = userRole === 'admin';
+    if (isCompletionRequest && !isCustomer && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        msg: "Only the customer can confirm completion of this booking"
       });
     }
 
@@ -598,7 +727,7 @@ export const updateBookingStatus = async (req: Request, res: Response, next: Nex
       booking.project
     ) {
       console.log('🔒 Verifying/ensuring dates are blocked for booking:', bookingIdStr);
-      const project = await Project.findById(booking.project);
+      const project = projectDoc || await Project.findById(booking.project);
       if (project && project.executionDuration) {
         const mode: 'hours' | 'days' =
           project.timeMode || project.executionDuration.unit || 'days';
@@ -652,12 +781,12 @@ export const updateBookingStatus = async (req: Request, res: Response, next: Nex
         await booking.save();
 
         // Block execution + buffer in team calendars via blockedRanges with a reason tag.
-        const projectDoc = project as any;
-        const resourceIds: string[] = Array.isArray(projectDoc.resources)
-          ? projectDoc.resources.map((r: any) => r.toString())
+        const projectResourceDoc = project as any;
+        const resourceIds: string[] = Array.isArray(projectResourceDoc.resources)
+          ? projectResourceDoc.resources.map((r: any) => r.toString())
           : [];
-        if (!resourceIds.length && projectDoc.professionalId) {
-          resourceIds.push(projectDoc.professionalId.toString());
+        if (!resourceIds.length && projectResourceDoc.professionalId) {
+          resourceIds.push(projectResourceDoc.professionalId.toString());
         }
 
 	        if (resourceIds.length && bookingIdStr) {
@@ -743,6 +872,13 @@ export const cancelBooking = async (req: Request, res: Response, next: NextFunct
       });
     }
 
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        msg: "Authentication required"
+      });
+    }
+
     const booking = await Booking.findById(bookingId);
     if (!booking) {
       return res.status(404).json({
@@ -752,8 +888,9 @@ export const cancelBooking = async (req: Request, res: Response, next: NextFunct
     }
 
     // Check authorization
-    const isCustomer = booking.customer.toString() === userId;
-    const isProfessional = booking.professional?.toString() === userId;
+    const userIdStr = userId.toString();
+    const isCustomer = booking.customer.toString() === userIdStr;
+    const isProfessional = booking.professional?.toString() === userIdStr;
 
     if (!isCustomer && !isProfessional) {
       return res.status(403).json({
@@ -771,7 +908,7 @@ export const cancelBooking = async (req: Request, res: Response, next: NextFunct
     }
 
     booking.cancellation = {
-      cancelledBy: new mongoose.Types.ObjectId(userId as string),
+      cancelledBy: userId,
       reason,
       cancelledAt: new Date()
     };
