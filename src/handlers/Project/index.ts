@@ -380,7 +380,7 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
     const teamMemberIds = project.resources || [];
 
     const professional = await User.findById(project.professionalId).select(
-      "companyAvailability companyBlockedDates companyBlockedRanges availability businessInfo.timezone"
+      "companyAvailability companyBlockedDates companyBlockedRanges businessInfo.timezone"
     );
 
     const { rangeStart, rangeEnd } = getDateRange(startDate, endDate, 180);
@@ -547,12 +547,10 @@ export const getProjectWorkingHours = async (req: Request, res: Response) => {
     }
 
     const professional = await User.findById(project.professionalId).select(
-      "companyAvailability availability businessInfo.timezone"
+      "companyAvailability businessInfo.timezone"
     );
 
-    const availability = resolveAvailability(
-      professional?.companyAvailability || professional?.availability
-    );
+    const availability = resolveAvailability(professional?.companyAvailability);
 
     res.json({
       success: true,

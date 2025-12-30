@@ -130,7 +130,7 @@ async function searchProfessionals(
 
     // Availability filter - check if professional has availability set
     if (availability === "true") {
-      filter.availability = { $exists: true, $ne: null };
+      filter.companyAvailability = { $exists: true, $ne: null };
     }
 
     // Execute query with pagination
@@ -139,7 +139,7 @@ async function searchProfessionals(
     const [professionals, total] = await Promise.all([
       User.find(filter)
         .select(
-          "name email businessInfo hourlyRate currency serviceCategories profileImage availability createdAt"
+          "name email businessInfo hourlyRate currency serviceCategories profileImage companyAvailability createdAt"
         )
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -151,7 +151,19 @@ async function searchProfessionals(
     console.log('✅ Found', total, 'professionals, returning', professionals.length);
 
     // If location filter is present, prioritize exact matches
-    let results = professionals;
+    const hasAnyAvailability = (availability?: Record<string, any>) =>
+      !!availability &&
+      Object.values(availability).some(
+        (day) => day?.available || day?.startTime || day?.endTime
+      );
+
+    let results = professionals.map((professional: any) => {
+      const { companyAvailability, ...rest } = professional;
+      return {
+        ...rest,
+        availability: hasAnyAvailability(companyAvailability),
+      };
+    });
     if (location && location.trim()) {
       const exactMatches = results.filter(
         (p: any) =>

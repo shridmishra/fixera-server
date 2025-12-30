@@ -853,7 +853,7 @@ export const buildProjectScheduleProposals = async (
   }
 
   const availability = resolveAvailability(
-    professional.companyAvailability || professional.availability
+    professional.companyAvailability
   );
   const timeZone = professional.businessInfo?.timezone || "UTC";
   const { isHoliday } = buildHolidayChecker(professional, timeZone);
@@ -1048,7 +1048,7 @@ export const validateProjectScheduleSelection = async ({
   }
 
   const availability = resolveAvailability(
-    professional.companyAvailability || professional.availability
+    professional.companyAvailability
   );
   const timeZone = professional.businessInfo?.timezone || "UTC";
   const { isHoliday } = buildHolidayChecker(professional, timeZone);
@@ -1158,7 +1158,7 @@ export const buildProjectScheduleWindow = async ({
   }
 
   const availability = resolveAvailability(
-    professional.companyAvailability || professional.availability
+    professional.companyAvailability
   );
   const timeZone = professional.businessInfo?.timezone || "UTC";
   const { isHoliday } = buildHolidayChecker(professional, timeZone);

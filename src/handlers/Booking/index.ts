@@ -336,7 +336,7 @@ export const getBookingById = async (req: Request, res: Response, next: NextFunc
 
     const booking = await Booking.findById(bookingId)
       .populate('customer', 'name email phone customerType location')
-      .populate('professional', 'name email businessInfo hourlyRate availability')
+      .populate('professional', 'name email businessInfo hourlyRate')
       .populate('project', 'title description pricing category service team postBookingQuestions')
       .populate('assignedTeamMembers', 'name email');
 

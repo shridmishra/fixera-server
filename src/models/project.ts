@@ -91,8 +91,7 @@ export interface ISubproject {
   included: IIncludedItem[];
   materialsIncluded: boolean;
   materials?: IMaterial[]; // List of materials if materialsIncluded is true
-  preparationDuration?: IPreparationDuration;
-  deliveryPreparation?: number;
+  preparationDuration: IPreparationDuration;
   executionDuration: IExecutionDuration;
   buffer?: IBuffer;
   intakeDuration?: IIntakeDuration;
@@ -329,8 +328,7 @@ const SubprojectSchema = new Schema<ISubproject>({
   included: [IncludedItemSchema],
   materialsIncluded: { type: Boolean, default: false },
   materials: [MaterialSchema],
-  preparationDuration: { type: PreparationDurationSchema },
-  deliveryPreparation: { type: Number, min: 0 },
+  preparationDuration: { type: PreparationDurationSchema, required: true },
   executionDuration: { type: ExecutionDurationSchema, required: true },
   buffer: BufferSchema,
   intakeDuration: IntakeDurationSchema,
