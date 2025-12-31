@@ -402,8 +402,6 @@ async function searchProjects(
         // (project has no coords or no maxKmRange). Exclude the project since
         // we can't verify distance.
         if (locationParts.length === 0) {
-          // Only include if the location filter was purely text-based and empty,
-          // which shouldn't happen if hasLocationFilter is true
           return false;
         }
 
