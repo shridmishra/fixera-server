@@ -159,7 +159,7 @@ async function backfillProjectGeo() {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY || "";
   const dryRunEnv = process.env.DRY_RUN;
   const dryRun = dryRunEnv === "true" || dryRunEnv === "1";
-  const geocodeDelayMs = 200;
+  const geocodeDelayMs = parseInt(process.env.GEOCODE_DELAY_MS || "200", 10);
   const logEvery = 100;
 
   await mongoose.connect(mongoUri);
@@ -177,6 +177,7 @@ async function backfillProjectGeo() {
   let skipped = 0;
   let skippedMissingAddress = 0;
   let skippedMissingKey = 0;
+  let warnedMissingKey = false;
   let skippedGeocodeFailed = 0;
   let skippedNoChange = 0;
   let errors = 0;
@@ -225,8 +226,10 @@ async function backfillProjectGeo() {
           }
         } else if (!apiKey) {
           if (needsLocation) {
-            console.warn(`Missing GOOGLE_MAPS_API_KEY, skipping project ${project._id}`);
-            skippedMissingKey += 1;
+            if (!warnedMissingKey) {
+              console.warn(`Missing GOOGLE_MAPS_API_KEY, will skip projects needing geocoding`);
+              warnedMissingKey = true;
+            } skippedMissingKey += 1;
             skipped += 1;
             continue;
           }
