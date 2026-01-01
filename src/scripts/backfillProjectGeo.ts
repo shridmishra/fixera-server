@@ -229,8 +229,11 @@ async function backfillProjectGeo() {
         if (!address) {
           if (needsLocation) {
             skippedMissingAddress += 1;
-            skipped += 1;
-            continue;
+            if (!hasCoordinates) {
+              skipped += 1;
+              continue;
+            }
+            // Fall through to clean up invalid legacy coordinates
           }
         } else if (!apiKey) {
           if (needsLocation) {
@@ -239,8 +242,11 @@ async function backfillProjectGeo() {
               warnedMissingKey = true;
             }
             skippedMissingKey += 1;
-            skipped += 1;
-            continue;
+            if (!hasCoordinates) {
+              skipped += 1;
+              continue;
+            }
+            // Fall through to clean up invalid legacy coordinates
           }
         } else {
           const geocodeResult = await geocodeAddress(address, apiKey);
@@ -248,8 +254,11 @@ async function backfillProjectGeo() {
             if (needsLocation) {
               console.warn(`Geocoding failed for project ${project._id}`);
               skippedGeocodeFailed += 1;
-              skipped += 1;
-              continue;
+              if (!hasCoordinates) {
+                skipped += 1;
+                continue;
+              }
+              // Fall through to clean up invalid legacy coordinates
             }
           } else {
             if (needsLocation) {
@@ -264,7 +273,8 @@ async function backfillProjectGeo() {
         }
       }
 
-      if (!nextLocation && !existingCountryCode && !nextCountryCode) {
+      // Skip only if there's nothing to set and no legacy coordinates to clean up
+      if (!nextLocation && !existingCountryCode && !nextCountryCode && !hasCoordinates) {
         skipped += 1;
         continue;
       }
