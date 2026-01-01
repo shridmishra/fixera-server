@@ -160,6 +160,9 @@ async function backfillProjectGeo() {
   const dryRunEnv = process.env.DRY_RUN;
   const dryRun = dryRunEnv === "true" || dryRunEnv === "1";
   const geocodeDelayMs = parseInt(process.env.GEOCODE_DELAY_MS || "200", 10);
+  if (!Number.isFinite(geocodeDelayMs) || geocodeDelayMs < 0) {
+    throw new Error("GEOCODE_DELAY_MS must be a non-negative number");
+  }
   const logEvery = 100;
 
   await mongoose.connect(mongoUri);
@@ -182,7 +185,12 @@ async function backfillProjectGeo() {
   let skippedNoChange = 0;
   let errors = 0;
 
-  const cursor = Project.find({ "distance.address": { $exists: true, $ne: "" } })
+  const cursor = Project.find({
+    $or: [
+      { "distance.address": { $exists: true, $ne: "" } },
+      { "distance.coordinates": { $exists: true } }
+    ]
+  })
     .lean()
     .cursor();
 
@@ -229,7 +237,8 @@ async function backfillProjectGeo() {
             if (!warnedMissingKey) {
               console.warn(`Missing GOOGLE_MAPS_API_KEY, will skip projects needing geocoding`);
               warnedMissingKey = true;
-            } skippedMissingKey += 1;
+            }
+            skippedMissingKey += 1;
             skipped += 1;
             continue;
           }
