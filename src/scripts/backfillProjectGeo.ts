@@ -23,12 +23,26 @@ const parseNumber = (value: unknown): number | null => {
   return null;
 };
 
+const isValidLatLng = (latitude: number, longitude: number): boolean => {
+  if (latitude < -90 || latitude > 90) {
+    return false;
+  }
+  if (longitude < -180 || longitude > 180) {
+    return false;
+  }
+  return true;
+};
+
 const getLegacyCoordinates = (distance: any): CoordinatePair | null => {
   const coords = distance?.coordinates;
   if (coords) {
     const latitude = parseNumber(coords.latitude ?? coords.lat);
     const longitude = parseNumber(coords.longitude ?? coords.lng);
     if (latitude !== null && longitude !== null) {
+      if (!isValidLatLng(latitude, longitude)) {
+        console.warn(`Discarding invalid legacy coordinates: lat=${latitude}, lng=${longitude}`);
+        return null;
+      }
       return { latitude, longitude };
     }
   }
@@ -38,10 +52,16 @@ const getLegacyCoordinates = (distance: any): CoordinatePair | null => {
 const hasLegacyCoordinates = (distance: any) =>
   Object.prototype.hasOwnProperty.call(distance || {}, "coordinates");
 
-const buildLocation = (coords: CoordinatePair): GeoPoint => ({
-  type: "Point",
-  coordinates: [coords.longitude, coords.latitude],
-});
+const buildLocation = (coords: CoordinatePair): GeoPoint | null => {
+  if (!isValidLatLng(coords.latitude, coords.longitude)) {
+    console.warn(`Discarding invalid coordinates when building location: lat=${coords.latitude}, lng=${coords.longitude}`);
+    return null;
+  }
+  return {
+    type: "Point",
+    coordinates: [coords.longitude, coords.latitude],
+  };
+};
 
 const hasValidLocation = (distance: any) => {
   const location = distance?.location;
@@ -51,7 +71,8 @@ const hasValidLocation = (distance: any) => {
   }
   const longitude = parseNumber(location.coordinates[0]);
   const latitude = parseNumber(location.coordinates[1]);
-  return longitude !== null && latitude !== null;
+  if (longitude === null || latitude === null) return false;
+  return isValidLatLng(latitude, longitude);
 };
 
 const getLocationCoordinates = (distance: any): [number, number] | null => {
@@ -62,28 +83,52 @@ const getLocationCoordinates = (distance: any): [number, number] | null => {
   const longitude = parseNumber(coords[0]);
   const latitude = parseNumber(coords[1]);
   if (longitude === null || latitude === null) return null;
+  if (!isValidLatLng(latitude, longitude)) {
+    console.warn(`Discarding invalid location coordinates: lat=${latitude}, lng=${longitude}`);
+    return null;
+  }
   return [longitude, latitude];
 };
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const geocodeAddress = async (address: string, apiKey: string) => {
+const GEOCODE_TIMEOUT_MS = 10_000;
+
+const geocodeAddress = async (address: string, apiKey: string): Promise<CoordinatePair | null> => {
   const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Google Maps API error: ${response.status}`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), GEOCODE_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Google Maps API error: ${response.status}`);
+    }
+    const data = await response.json();
+    if (data.status !== "OK" || !Array.isArray(data.results) || data.results.length === 0) {
+      return null;
+    }
+    const location = data.results[0]?.geometry?.location;
+    const latitude = parseNumber(location?.lat);
+    const longitude = parseNumber(location?.lng);
+    if (latitude === null || longitude === null) {
+      return null;
+    }
+    if (!isValidLatLng(latitude, longitude)) {
+      console.warn(`Discarding invalid geocoded coordinates: lat=${latitude}, lng=${longitude}`);
+      return null;
+    }
+    return { latitude, longitude };
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === "AbortError") {
+      console.warn(`Geocoding request timed out after ${GEOCODE_TIMEOUT_MS}ms for address: ${address}`);
+      return null;
+    }
+    throw error;
   }
-  const data = await response.json();
-  if (data.status !== "OK" || !Array.isArray(data.results) || data.results.length === 0) {
-    return null;
-  }
-  const location = data.results[0]?.geometry?.location;
-  const latitude = parseNumber(location?.lat);
-  const longitude = parseNumber(location?.lng);
-  if (latitude === null || longitude === null) {
-    return null;
-  }
-  return { latitude, longitude };
 };
 
 async function backfillProjectGeo() {
@@ -93,14 +138,15 @@ async function backfillProjectGeo() {
   }
 
   const apiKey = process.env.GOOGLE_MAPS_API_KEY || "";
-  const dryRun = false;
+  const dryRunEnv = process.env.DRY_RUN;
+  const dryRun = dryRunEnv === "true" || dryRunEnv === "1";
   const geocodeDelayMs = 200;
   const logEvery = 100;
 
   await mongoose.connect(mongoUri);
   console.log("Connected to MongoDB");
   console.log("Geocoding enabled:", Boolean(apiKey));
-  console.log("Dry run:", dryRun);
+  console.log("Dry run (set DRY_RUN=true or DRY_RUN=1 to enable):", dryRun);
   console.log("Geocode delay (ms):", geocodeDelayMs);
 
   let scanned = 0;
@@ -220,6 +266,14 @@ async function backfillProjectGeo() {
     $or: [
       { "distance.location": { $exists: false } },
       { "distance.location.coordinates": { $size: 0 } },
+      { "distance.location.coordinates.0": { $type: "null" } },
+      { "distance.location.coordinates.1": { $type: "null" } },
+      { "distance.location.coordinates.0": { $not: { $type: "number" } } },
+      { "distance.location.coordinates.1": { $not: { $type: "number" } } },
+      { "distance.location.coordinates.0": { $lt: -180 } },
+      { "distance.location.coordinates.0": { $gt: 180 } },
+      { "distance.location.coordinates.1": { $lt: -90 } },
+      { "distance.location.coordinates.1": { $gt: 90 } },
     ],
   });
 

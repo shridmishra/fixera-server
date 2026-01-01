@@ -467,12 +467,12 @@ async function searchProjects(
       }
     }
 
-    const resultsToPage = filteredResults ?? projects;
-    const totalResults = filteredResults ? resultsToPage.length : total;
-    const pagedResults = filteredResults ? resultsToPage.slice(skip, skip + limit) : resultsToPage;
+    const baseResults = filteredResults ?? projects;
+    const totalCount = filteredResults ? baseResults.length : total;
+    const finalResults = filteredResults ? baseResults.slice(skip, skip + limit) : baseResults;
 
     // Batch-load professionals for all published projects to avoid N+1 queries
-    const publishedProjects = pagedResults.filter((p: any) => p?.status === "published");
+    const publishedProjects = finalResults.filter((p: any) => p?.status === "published");
     const professionalIdSet = new Set(
       publishedProjects
         .map((p: any) => p.professionalId?._id?.toString() || p.professionalId?.toString())
@@ -493,7 +493,7 @@ async function searchProjects(
     );
 
     const resultsWithAvailability = await Promise.all(
-      pagedResults.map(async (project: any) => {
+      finalResults.map(async (project: any) => {
         if (project?.status !== "published") {
           return project;
         }
@@ -574,10 +574,10 @@ async function searchProjects(
     res.json({
       results: resultsWithAvailability,
       pagination: {
-        total: totalResults,
+        total: totalCount,
         page: Math.ceil(skip / limit) + 1,
         limit,
-        totalPages: Math.ceil(totalResults / limit),
+        totalPages: Math.ceil(totalCount / limit),
       },
     });
   } catch (error) {

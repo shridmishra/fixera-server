@@ -242,9 +242,26 @@ const DistanceSchema = new Schema<IDistance>({
     coordinates: {
       type: [Number],
       validate: {
-        validator: (value: number[]) =>
-          !value || (Array.isArray(value) && value.length === 2),
-        message: "Invalid coordinates format. Expected [longitude, latitude]",
+        validator: (value: number[]) => {
+          if (!value || (Array.isArray(value) && value.length === 0)) {
+            return true;
+          }
+          if (!Array.isArray(value) || value.length !== 2) {
+            return false;
+          }
+          const [longitude, latitude] = value;
+          if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
+            return false;
+          }
+          if (longitude < -180 || longitude > 180) {
+            return false;
+          }
+          if (latitude < -90 || latitude > 90) {
+            return false;
+          }
+          return true;
+        },
+        message: "Invalid coordinates: expected [longitude, latitude] with longitude ∈ [-180,180] and latitude ∈ [-90,90]",
       },
     },
   },
