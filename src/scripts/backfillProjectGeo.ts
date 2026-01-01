@@ -304,7 +304,7 @@ async function backfillProjectGeo() {
       if (Object.keys(unsetUpdate).length > 0) {
         updateCommand.$unset = unsetUpdate;
       }
-      await Project.updateOne({ _id: project._id }, updateCommand, { strict: false });
+      await Project.updateOne({ _id: project._id }, updateCommand);
       updated += 1;
 
       if (scanned % logEvery === 0) {
