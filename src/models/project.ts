@@ -13,9 +13,9 @@ export interface IDistance {
   useCompanyAddress: boolean;
   maxKmRange: number;
   noBorders: boolean;
-  coordinates?: {
-    latitude: number;
-    longitude: number;
+  location?: {
+    type: "Point";
+    coordinates: [number, number];
   };
 }
 
@@ -233,9 +233,20 @@ const DistanceSchema = new Schema<IDistance>({
   useCompanyAddress: { type: Boolean, default: false },
   maxKmRange: { type: Number, required: true, min: 1, max: 200 },
   noBorders: { type: Boolean, default: false },
-  coordinates: {
-    latitude: { type: Number, min: -90, max: 90 },
-    longitude: { type: Number, min: -180, max: 180 },
+  location: {
+    type: {
+      type: String,
+      enum: ["Point"],
+      default: "Point",
+    },
+    coordinates: {
+      type: [Number],
+      validate: {
+        validator: (value: number[]) =>
+          !value || (Array.isArray(value) && value.length === 2),
+        message: "Invalid coordinates format. Expected [longitude, latitude]",
+      },
+    },
   },
 });
 
@@ -507,6 +518,7 @@ ProjectSchema.index({ professionalId: 1, autoSaveTimestamp: -1 });
 ProjectSchema.index({ title: 'text', description: 'text' });
 ProjectSchema.index({ category: 1, service: 1 });
 ProjectSchema.index({ status: 1 });
+ProjectSchema.index({ "distance.location": "2dsphere" });
 
 // Pre-save middleware for auto-save timestamp
 ProjectSchema.pre("save", function (next) {
