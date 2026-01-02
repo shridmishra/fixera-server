@@ -320,7 +320,7 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
     const teamMemberIds = project.resources || [];
 
     const professional = await User.findById(project.professionalId).select(
-      "companyAvailability companyBlockedDates companyBlockedRanges businessInfo.timezone"
+      "companyAvailability companyBlockedDates companyBlockedRanges blockedDates blockedRanges businessInfo.timezone"
     );
 
     const { rangeStart, rangeEnd } = getDateRange(startDate, endDate, 180);
@@ -362,6 +362,25 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
       });
     }
 
+    // Include the professional's personal blocked dates (shown in their profile calendar)
+    if (professional?.blockedDates) {
+      professional.blockedDates.forEach((blocked) => {
+        const date = toIsoDate(blocked.date);
+        if (!date) return;
+        blockedCategories.personal.dates.push(date);
+        allBlockedDates.add(date);
+      });
+    }
+
+    if (professional?.blockedRanges) {
+      professional.blockedRanges.forEach((range) => {
+        const blockedRange = toBlockedRange(range);
+        if (!blockedRange) return;
+        blockedCategories.personal.ranges.push(blockedRange);
+        allBlockedRanges.push(blockedRange);
+      });
+    }
+
     const teamMembers =
       teamMemberIds.length > 0
         ? await User.find({
@@ -392,7 +411,11 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
     const bookingFilter: any = {
       status: { $nin: ["completed", "cancelled", "refunded"] },
       scheduledStartDate: { $exists: true, $ne: null },
-      $or: [{ project: project._id }],
+      $or: [
+        { project: project._id },
+        // Include bookings where the professional (project owner) is booked on ANY project
+        { professional: project.professionalId },
+      ],
     };
 
     if (teamMemberIds.length > 0) {
