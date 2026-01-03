@@ -532,8 +532,7 @@ async function searchProjects(
     const professionalMap = new Map(
       professionalsData.map((p: any) => [p._id.toString(), p])
     );
-    const shouldLogAvailability =
-      !process.env.NODE_ENV || process.env.NODE_ENV !== "production";
+    const shouldLogAvailability = process.env.NODE_ENV !== "production";
 
     const resultsWithAvailability = await Promise.all(
       finalResults.map(async (project: any) => {
