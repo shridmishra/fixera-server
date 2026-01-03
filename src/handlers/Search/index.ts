@@ -289,20 +289,17 @@ async function searchProjects(
 
     const toObjectIdString = (value?: unknown) => {
       if (!value) return null;
-      if (typeof value === "string") {
-        return Types.ObjectId.isValid(value) ? value : null;
-      }
-      if (typeof value === "object" && (value as any)._id) {
-        const raw = (value as any)._id;
-        const id =
-          typeof raw === "string"
-            ? raw
-            : typeof raw?.toString === "function"
-              ? raw.toString()
-              : null;
-        return id && Types.ObjectId.isValid(id) ? id : null;
-      }
-      return null;
+      const raw =
+        typeof value === "object" && (value as any)?._id != null
+          ? (value as any)._id
+          : value;
+      const id =
+        typeof raw === "string"
+          ? raw
+          : typeof raw?.toString === "function"
+            ? raw.toString()
+            : null;
+      return id && Types.ObjectId.isValid(id) ? id : null;
     };
 
     const escapeRegExp = (value: string) =>
@@ -319,11 +316,11 @@ async function searchProjects(
 
     const hasLocationFilter = Boolean(
       locationValue ||
-        customerAddressValue ||
-        customerCityValue ||
-        customerStateValue ||
-        customerCountryValue ||
-        hasGeoCoordinates
+      customerAddressValue ||
+      customerCityValue ||
+      customerStateValue ||
+      customerCountryValue ||
+      hasGeoCoordinates
     );
 
     const locationParts = [
@@ -523,10 +520,10 @@ async function searchProjects(
     // Fetch all professionals in a single query
     const professionalsData = professionalIds.length > 0
       ? await User.find({ _id: { $in: professionalIds } })
-          .select(
-            "name email businessInfo hourlyRate currency profileImage companyAvailability companyBlockedDates companyBlockedRanges"
-          )
-          .lean()
+        .select(
+          "name email businessInfo hourlyRate currency profileImage companyAvailability companyBlockedDates companyBlockedRanges"
+        )
+        .lean()
       : [];
 
     // Create a lookup map for quick access
@@ -610,15 +607,15 @@ async function searchProjects(
                   firstAvailableDate: subprojectProposals?.earliestBookableDate || null,
                   firstAvailableWindow: subprojectProposals?.earliestProposal
                     ? {
-                        start: subprojectProposals.earliestProposal.start,
-                        end: subprojectProposals.earliestProposal.executionEnd || subprojectProposals.earliestProposal.end,
-                      }
+                      start: subprojectProposals.earliestProposal.start,
+                      end: subprojectProposals.earliestProposal.executionEnd || subprojectProposals.earliestProposal.end,
+                    }
                     : null,
                   shortestThroughputWindow: subprojectProposals?.shortestThroughputProposal
                     ? {
-                        start: subprojectProposals.shortestThroughputProposal.start,
-                        end: subprojectProposals.shortestThroughputProposal.executionEnd || subprojectProposals.shortestThroughputProposal.end,
-                      }
+                      start: subprojectProposals.shortestThroughputProposal.start,
+                      end: subprojectProposals.shortestThroughputProposal.executionEnd || subprojectProposals.shortestThroughputProposal.end,
+                    }
                     : null,
                 };
               } catch {
@@ -634,15 +631,15 @@ async function searchProjects(
             firstAvailableDate: proposals?.earliestBookableDate || null,
             firstAvailableWindow: proposals?.earliestProposal
               ? {
-                  start: proposals.earliestProposal.start,
-                  end: proposals.earliestProposal.end,
-                }
+                start: proposals.earliestProposal.start,
+                end: proposals.earliestProposal.end,
+              }
               : null,
             shortestThroughputWindow: proposals?.shortestThroughputProposal
               ? {
-                  start: proposals.shortestThroughputProposal.start,
-                  end: proposals.shortestThroughputProposal.end,
-                }
+                start: proposals.shortestThroughputProposal.start,
+                end: proposals.shortestThroughputProposal.end,
+              }
               : null,
           };
         } catch (error) {
