@@ -40,7 +40,7 @@ async function migratePreparationDuration() {
           continue;
         }
 
-        const legacyValue = subproject.deliveryPreparation;
+        const legacyValue = (subproject as unknown as { deliveryPreparation?: number }).deliveryPreparation;
         if (!isFiniteNumber(legacyValue)) {
           skippedMissingValue++;
           continue;
