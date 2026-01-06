@@ -104,6 +104,20 @@ const addDaysZoned = (zonedDate: Date, days: number) => {
   return next;
 };
 
+const isExactMidnightUtc = (date: Date) =>
+  date.getUTCHours() === 0 &&
+  date.getUTCMinutes() === 0 &&
+  date.getUTCSeconds() === 0 &&
+  date.getUTCMilliseconds() === 0;
+
+const normalizeRangeEndInclusive = (rangeEnd: Date, timeZone: string) => {
+  if (!isExactMidnightUtc(rangeEnd)) return rangeEnd;
+  const endZoned = toZonedTime(rangeEnd, timeZone);
+  const endDayStart = startOfDayZoned(endZoned);
+  const endDayNextStart = addDaysZoned(endDayStart, 1);
+  return fromZonedTime(endDayNextStart, timeZone);
+};
+
 const formatDateKey = (zonedDate: Date) => {
   const year = zonedDate.getUTCFullYear();
   const month = String(zonedDate.getUTCMonth() + 1).padStart(2, "0");
@@ -261,9 +275,10 @@ const buildHolidayChecker = (professional: any, timeZone: string) => {
     const dayStartUtc = fromZonedTime(startOfDayZoned(zonedDate), timeZone);
     const dayEndUtc = fromZonedTime(addDaysZoned(startOfDayZoned(zonedDate), 1), timeZone);
 
-    return holidayRanges.some(
-      (range) => range.end > dayStartUtc && range.start < dayEndUtc
-    );
+    return holidayRanges.some((range) => {
+      const rangeEnd = normalizeRangeEndInclusive(range.end, timeZone);
+      return rangeEnd > dayStartUtc && range.start < dayEndUtc;
+    });
   };
 
   return { isHoliday };
@@ -460,11 +475,12 @@ const isDayBlocked = (
 
   const intervals = blockedRanges
     .map((range) => {
-      if (range.end <= dayStartUtc || range.start >= dayEndUtc) {
+      const rangeEnd = normalizeRangeEndInclusive(range.end, timeZone);
+      if (rangeEnd <= dayStartUtc || range.start >= dayEndUtc) {
         return null;
       }
       const start = range.start > dayStartUtc ? range.start : dayStartUtc;
-      const end = range.end < dayEndUtc ? range.end : dayEndUtc;
+      const end = rangeEnd < dayEndUtc ? rangeEnd : dayEndUtc;
       return { start, end };
     })
     .filter(Boolean) as Array<{ start: Date; end: Date }>;
@@ -499,7 +515,7 @@ const isDayBlocked = (
 
   totalMinutes += (currentEnd - currentStart) / (1000 * 60);
 
-  return totalMinutes / 60 > PARTIAL_BLOCK_THRESHOLD_HOURS;
+  return totalMinutes / 60 >= PARTIAL_BLOCK_THRESHOLD_HOURS;
 };
 
 const advanceWorkingDays = (
@@ -680,7 +696,12 @@ const getAvailableSlotsForDate = (
     const slotStartUtc = fromZonedTime(slotStartZoned, timeZone);
     const slotEndUtc = new Date(slotStartUtc.getTime() + executionMinutes * 60000);
 
-    const overlaps = windowOverlapsRanges(slotStartUtc, slotEndUtc, blockedRanges);
+    const overlaps = windowOverlapsRanges(
+      slotStartUtc,
+      slotEndUtc,
+      blockedRanges,
+      timeZone
+    );
 
     if (overlaps) {
       continue;
@@ -708,7 +729,9 @@ const getAvailableSlotsForDate = (
       if (bufferStartZoned && bufferEndZoned > bufferStartZoned) {
         const bufferStartUtc = fromZonedTime(bufferStartZoned, timeZone);
         const bufferEndUtc = fromZonedTime(bufferEndZoned, timeZone);
-        if (windowOverlapsRanges(bufferStartUtc, bufferEndUtc, blockedRanges)) {
+        if (
+          windowOverlapsRanges(bufferStartUtc, bufferEndUtc, blockedRanges, timeZone)
+        ) {
           continue;
         }
       }
@@ -788,10 +811,12 @@ const addWorkingHours = (
 const windowOverlapsRanges = (
   windowStartUtc: Date,
   windowEndUtc: Date,
-  blockedRanges: Array<{ start: Date; end: Date }>
-) => blockedRanges.some(
-  (range) => windowStartUtc < range.end && windowEndUtc > range.start
-);
+  blockedRanges: Array<{ start: Date; end: Date }>,
+  timeZone: string
+) => blockedRanges.some((range) => {
+  const rangeEnd = normalizeRangeEndInclusive(range.end, timeZone);
+  return windowStartUtc < rangeEnd && windowEndUtc > range.start;
+});
 
 const calculateBufferEnd = (
   executionEndZoned: Date,

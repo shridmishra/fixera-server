@@ -415,6 +415,8 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         { project: project._id },
         // Include bookings where the professional (project owner) is booked on ANY project
         { professional: project.professionalId },
+        // Include bookings where the professional is assigned as a team member on OTHER projects
+        { assignedTeamMembers: project.professionalId },
       ],
     };
 

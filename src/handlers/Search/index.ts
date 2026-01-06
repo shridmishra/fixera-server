@@ -371,16 +371,29 @@ async function searchProjects(
         // Fall back to regex on address for backwards compatibility
         const countryCodeUpper = customerCountryValue.toUpperCase();
         const countryRegex = new RegExp(escapeRegExp(customerCountryValue), "i");
+        // noBorders=true means "don't cross borders" (stay in same country)
+        // noBorders=false means project can serve customers across borders
         geoPipeline.push({
           $match: {
             $or: [
-              { "distance.noBorders": true },
-              { "distance.countryCode": countryCodeUpper },
-              // Fallback: match address if countryCode not set
+              // Projects that CAN cross borders (noBorders is false or not set)
+              { "distance.noBorders": { $ne: true } },
+              // Projects that CANNOT cross borders must match customer's country
               {
                 $and: [
-                  { "distance.countryCode": { $exists: false } },
-                  { "distance.address": countryRegex },
+                  { "distance.noBorders": true },
+                  {
+                    $or: [
+                      { "distance.countryCode": countryCodeUpper },
+                      // Fallback: match address if countryCode not set
+                      {
+                        $and: [
+                          { "distance.countryCode": { $exists: false } },
+                          { "distance.address": countryRegex },
+                        ],
+                      },
+                    ],
+                  },
                 ],
               },
             ],
@@ -463,7 +476,9 @@ async function searchProjects(
         const projectCountryCode = typeof distance.countryCode === "string" ? distance.countryCode : null;
         const noBorders = Boolean(distance.noBorders);
 
-        if (!noBorders && customerCountryValue) {
+        // noBorders=true means "don't cross borders" (stay in same country)
+        // When noBorders is true, only show to customers in matching country
+        if (noBorders && customerCountryValue) {
           const customerCountryUpper = customerCountryValue.toUpperCase();
           // Prefer matching by countryCode, fallback to address matching
           const countryMatches = projectCountryCode
