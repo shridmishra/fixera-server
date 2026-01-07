@@ -40,7 +40,8 @@ export interface IPricing {
   amount?: number;
   priceRange?: { min: number; max: number };
   minProjectValue?: number;
-  minQuantity?: number;
+  includedQuantity?: number; // Fixed pricing: max quantity covered by price
+  minOrderQuantity?: number; // Unit pricing: minimum order quantity
 }
 
 export interface IIncludedItem {
@@ -304,7 +305,8 @@ const PricingSchema = new Schema<IPricing>({
     max: { type: Number, min: 0 },
   },
   minProjectValue: { type: Number, min: 0 },
-  minQuantity: { type: Number, min: 1 },
+  includedQuantity: { type: Number, min: 1 }, // Fixed pricing: max quantity
+  minOrderQuantity: { type: Number, min: 1 }, // Unit pricing: min order
 });
 
 // Included Item Schema
