@@ -306,6 +306,16 @@ const PricingSchema = new Schema<IPricing>({
   quantityRange: {
     min: { type: Number, min: 1 },
     max: { type: Number, min: 1 },
+    validate: {
+      validator: (value: { min?: number; max?: number } | null) => {
+        if (value == null) return true
+        if (typeof value.min !== "number" || typeof value.max !== "number") {
+          return true
+        }
+        return value.max > value.min
+      },
+      message: "quantityRange.max must be greater than quantityRange.min",
+    },
   },
   minOrderQuantity: { type: Number, min: 1 }, // Unit pricing: minimum order quantity
 });
