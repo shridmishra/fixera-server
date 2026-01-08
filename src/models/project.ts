@@ -198,14 +198,14 @@ export interface IProject extends Document {
   status: "draft" | "pending" | "rejected" | "published" | "on_hold" | "suspended";
   // Booking lifecycle status (only applicable when project is published and has active bookings)
   bookingStatus?:
-    | "rfq"
-    | "quoted"
-    | "booked"
-    | "execution"
-    | "completed"
-    | "cancelled"
-    | "dispute"
-    | "warranty";
+  | "rfq"
+  | "quoted"
+  | "booked"
+  | "execution"
+  | "completed"
+  | "cancelled"
+  | "dispute"
+  | "warranty";
   qualityChecks: IQualityCheck[];
   adminFeedback?: string;
   submittedAt?: Date;
@@ -576,7 +576,9 @@ ProjectSchema.pre("validate", function (next) {
         }
         // Ensure max >= min
         if (qr.min != null && qr.max != null && qr.max < qr.min) {
-          qr.max = qr.min;
+          return next(new Error(
+            `Subproject "${subproject.name}": quantityRange.max (${qr.max}) must be >= quantityRange.min (${qr.min})`
+          ));
         }
       }
     }
