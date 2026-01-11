@@ -481,47 +481,28 @@ const buildBlockedData = async (
 };
 
 /**
- * Build blocked data per individual team member for multi-resource availability.
- * Returns a Map keyed by member ID with each member's blocked dates and ranges.
+ * Collect company-level blocked dates and ranges, including customer blocks.
+ * These blocks apply to all team members.
  */
-const buildPerMemberBlockedData = async (
-  project: any,
+const collectCompanyBlocks = (
   professional: any,
   timeZone: string,
   customerBlocks?: CustomerBlocks
-): Promise<PerMemberBlockedData> => {
-  const perMemberData: PerMemberBlockedData = new Map();
-
-  // Normalize all resource IDs to strings up-front using a Set for O(1) lookups
-  const rawResources = project.resources || [];
-  const teamMemberIdsSet = new Set<string>();
-  for (const id of rawResources) {
-    if (id == null) continue;
-    const idStr = typeof id === 'string' ? id : id.toString();
-    if (idStr) {
-      teamMemberIdsSet.add(idStr);
-    }
-  }
-
-  // Include professional in the team if not already included
-  const professionalId = project.professionalId?.toString() || professional?._id?.toString();
-  if (professionalId) {
-    teamMemberIdsSet.add(professionalId);
-  }
-
-  // Keep array for iteration where needed
-  const teamMemberIds: string[] = Array.from(teamMemberIdsSet);
-
-  // Initialize each member with company blocks (shared by all)
+): {
+  companyBlockedDates: Set<string>;
+  companyBlockedRanges: Array<{ start: Date; end: Date; reason?: string }>;
+} => {
   const companyBlockedDates = new Set<string>();
   const companyBlockedRanges: Array<{ start: Date; end: Date; reason?: string }> = [];
 
+  // Add professional's company-level blocked dates
   professional?.companyBlockedDates?.forEach((blocked: any) => {
     if (!blocked?.date) return;
     const zoned = toZonedTime(new Date(blocked.date), timeZone);
     companyBlockedDates.add(formatDateKey(zoned));
   });
 
+  // Add professional's company-level blocked ranges
   professional?.companyBlockedRanges?.forEach((range: any) => {
     if (!range?.startDate || !range?.endDate) return;
     const start = new Date(range.startDate);
@@ -530,7 +511,7 @@ const buildPerMemberBlockedData = async (
     companyBlockedRanges.push({ start, end, reason: range.reason });
   });
 
-  // Add customer blocks to company blocks (applies to all members)
+  // Add customer blocked dates (applies to all members)
   if (customerBlocks?.dates) {
     customerBlocks.dates.forEach((blocked) => {
       if (!blocked?.date) return;
@@ -539,6 +520,7 @@ const buildPerMemberBlockedData = async (
     });
   }
 
+  // Add customer blocked windows as ranges (applies to all members)
   if (customerBlocks?.windows) {
     customerBlocks.windows.forEach((window) => {
       if (!window?.date) return;
@@ -559,26 +541,42 @@ const buildPerMemberBlockedData = async (
     });
   }
 
-  // Fetch all team members' personal blocks
-  const teamMembers =
-    teamMemberIds.length > 0
-      ? await User.find({ _id: { $in: teamMemberIds } }).select(
-          "blockedDates blockedRanges"
-        )
-      : [];
+  return { companyBlockedDates, companyBlockedRanges };
+};
 
+/**
+ * Fetch team members from database and build their personal blocked data.
+ * Each member inherits company blocks and adds their own personal blocks.
+ */
+const collectTeamMemberBlocks = async (
+  teamMemberIds: string[],
+  companyBlockedDates: Set<string>,
+  companyBlockedRanges: Array<{ start: Date; end: Date; reason?: string }>,
+  timeZone: string
+): Promise<Map<string, MemberBlockedData>> => {
   const memberBlocksMap = new Map<string, MemberBlockedData>();
+
+  if (teamMemberIds.length === 0) {
+    return memberBlocksMap;
+  }
+
+  const teamMembers = await User.find({ _id: { $in: teamMemberIds } }).select(
+    "blockedDates blockedRanges"
+  );
+
   teamMembers.forEach((member: any) => {
     const memberId = member._id.toString();
     const blockedDates = new Set<string>(companyBlockedDates);
     const blockedRanges = [...companyBlockedRanges];
 
+    // Add member's personal blocked dates
     member.blockedDates?.forEach((blocked: any) => {
       if (!blocked?.date) return;
       const zoned = toZonedTime(new Date(blocked.date), timeZone);
       blockedDates.add(formatDateKey(zoned));
     });
 
+    // Add member's personal blocked ranges
     member.blockedRanges?.forEach((range: any) => {
       if (!range?.startDate || !range?.endDate) return;
       const start = new Date(range.startDate);
@@ -590,38 +588,24 @@ const buildPerMemberBlockedData = async (
     memberBlocksMap.set(memberId, { blockedDates, blockedRanges });
   });
 
-  // Fetch bookings for each team member individually
-  // Convert string IDs to ObjectIds for proper MongoDB matching, filtering invalid IDs
-  const teamMemberObjectIds = toValidObjectIds(teamMemberIds);
-  const bookingFilter: any = {
-    status: { $nin: ["completed", "cancelled", "refunded"] },
-    scheduledStartDate: { $exists: true, $ne: null },
-    $or: [
-      { project: project._id },
-    ],
-    $and: [
-      {
-        $or: [
-          { scheduledBufferEndDate: { $exists: true, $ne: null } },
-          { scheduledExecutionEndDate: { $exists: true, $ne: null } },
-        ],
-      },
-    ],
-  };
+  return memberBlocksMap;
+};
 
-  // Only add team member filters if we have valid ObjectIds
-  if (teamMemberObjectIds.length > 0) {
-    bookingFilter.$or.push(
-      { assignedTeamMembers: { $in: teamMemberObjectIds } },
-      { professional: { $in: teamMemberObjectIds } }
-    );
-  }
-
-  const bookings = await Booking.find(bookingFilter).select(
-    "scheduledStartDate scheduledExecutionEndDate scheduledBufferStartDate scheduledBufferEndDate scheduledBufferUnit executionEndDate bufferStartDate scheduledEndDate assignedTeamMembers professional status"
-  );
-
+/**
+ * Process bookings and assign blocked periods to affected team members.
+ * Updates memberBlocksMap in place with booking-related blocks.
+ */
+const assignBookingBlocks = (
+  bookings: any[],
+  teamMemberIdsSet: Set<string>,
+  projectId: any,
+  memberBlocksMap: Map<string, MemberBlockedData>,
+  companyBlockedDates: Set<string>,
+  companyBlockedRanges: Array<{ start: Date; end: Date; reason?: string }>,
+  teamMemberIds: string[]
+): void => {
   bookings.forEach((booking) => {
+    // Legacy field fallbacks for older bookings
     const scheduledExecutionEndDate =
       booking.scheduledExecutionEndDate || (booking as any).executionEndDate;
     const scheduledBufferStartDate =
@@ -651,7 +635,7 @@ const buildPerMemberBlockedData = async (
     }
 
     // If booking is for this project, all team members are affected
-    if (booking.project?.toString() === project._id?.toString()) {
+    if (booking.project?.toString() === projectId?.toString()) {
       teamMemberIds.forEach((id) => affectedMembers.add(id));
     }
 
@@ -666,6 +650,7 @@ const buildPerMemberBlockedData = async (
         memberBlocksMap.set(memberId, memberData);
       }
 
+      // Block the execution period
       if (booking.scheduledStartDate && scheduledExecutionEndDate) {
         memberData.blockedRanges.push({
           start: new Date(booking.scheduledStartDate),
@@ -674,6 +659,7 @@ const buildPerMemberBlockedData = async (
         });
       }
 
+      // Block the buffer period (if exists)
       if (scheduledBufferStartDate && scheduledBufferEndDate && scheduledExecutionEndDate) {
         memberData.blockedRanges.push({
           start: new Date(scheduledBufferStartDate),
@@ -683,8 +669,96 @@ const buildPerMemberBlockedData = async (
       }
     });
   });
+};
 
-  // Ensure all team members have entries
+/**
+ * Build blocked data per individual team member for multi-resource availability.
+ * Returns a Map keyed by member ID with each member's blocked dates and ranges.
+ * Composes collectCompanyBlocks, collectTeamMemberBlocks, and assignBookingBlocks.
+ */
+const buildPerMemberBlockedData = async (
+  project: any,
+  professional: any,
+  timeZone: string,
+  customerBlocks?: CustomerBlocks
+): Promise<PerMemberBlockedData> => {
+  const perMemberData: PerMemberBlockedData = new Map();
+
+  // Normalize all resource IDs to strings up-front using a Set for O(1) lookups
+  const rawResources = project.resources || [];
+  const teamMemberIdsSet = new Set<string>();
+  for (const id of rawResources) {
+    if (id == null) continue;
+    const idStr = typeof id === 'string' ? id : id.toString();
+    if (idStr) {
+      teamMemberIdsSet.add(idStr);
+    }
+  }
+
+  // Include professional in the team if not already included
+  const professionalId = project.professionalId?.toString() || professional?._id?.toString();
+  if (professionalId) {
+    teamMemberIdsSet.add(professionalId);
+  }
+
+  // Keep array for iteration where needed
+  const teamMemberIds: string[] = Array.from(teamMemberIdsSet);
+
+  // Step 1: Collect company-level blocks (including customer blocks)
+  const { companyBlockedDates, companyBlockedRanges } = collectCompanyBlocks(
+    professional,
+    timeZone,
+    customerBlocks
+  );
+
+  // Step 2: Collect team member personal blocks
+  const memberBlocksMap = await collectTeamMemberBlocks(
+    teamMemberIds,
+    companyBlockedDates,
+    companyBlockedRanges,
+    timeZone
+  );
+
+  // Step 3: Fetch and process bookings
+  const teamMemberObjectIds = toValidObjectIds(teamMemberIds);
+  const bookingFilter: any = {
+    status: { $nin: ["completed", "cancelled", "refunded"] },
+    scheduledStartDate: { $exists: true, $ne: null },
+    $or: [{ project: project._id }],
+    $and: [
+      {
+        $or: [
+          { scheduledBufferEndDate: { $exists: true, $ne: null } },
+          { scheduledExecutionEndDate: { $exists: true, $ne: null } },
+        ],
+      },
+    ],
+  };
+
+  // Only add team member filters if we have valid ObjectIds
+  if (teamMemberObjectIds.length > 0) {
+    bookingFilter.$or.push(
+      { assignedTeamMembers: { $in: teamMemberObjectIds } },
+      { professional: { $in: teamMemberObjectIds } }
+    );
+  }
+
+  const bookings = await Booking.find(bookingFilter).select(
+    "scheduledStartDate scheduledExecutionEndDate scheduledBufferStartDate scheduledBufferEndDate scheduledBufferUnit executionEndDate bufferStartDate scheduledEndDate assignedTeamMembers professional project status"
+  );
+
+  // Step 4: Assign booking blocks to affected members
+  assignBookingBlocks(
+    bookings,
+    teamMemberIdsSet,
+    project._id,
+    memberBlocksMap,
+    companyBlockedDates,
+    companyBlockedRanges,
+    teamMemberIds
+  );
+
+  // Step 5: Ensure all team members have entries and populate perMemberData
   teamMemberIds.forEach((memberId) => {
     if (!memberBlocksMap.has(memberId)) {
       memberBlocksMap.set(memberId, {

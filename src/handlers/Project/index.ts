@@ -425,12 +425,21 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
     const teamMemberObjectIds: mongoose.Types.ObjectId[] = [];
     if (Array.isArray(teamMemberIds)) {
       for (const id of teamMemberIds) {
-        if (id == null) continue;
+        if (id == null) {
+          console.warn(
+            `[getProjectTeamAvailability] Skipping null/undefined team member ID in teamMemberIds for project ${project._id}`
+          );
+          continue;
+        }
 
         // Handle string IDs
         if (typeof id === 'string') {
           if (mongoose.isValidObjectId(id)) {
             teamMemberObjectIds.push(new mongoose.Types.ObjectId(id));
+          } else {
+            console.warn(
+              `[getProjectTeamAvailability] Skipping invalid string team member ID "${id}" in teamMemberIds for project ${project._id}`
+            );
           }
           continue;
         }
@@ -439,6 +448,10 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         const idStr = String(id);
         if (mongoose.isValidObjectId(idStr)) {
           teamMemberObjectIds.push(new mongoose.Types.ObjectId(idStr));
+        } else {
+          console.warn(
+            `[getProjectTeamAvailability] Skipping invalid team member ID (type: ${typeof id}, value: ${idStr}) in teamMemberIds for project ${project._id}`
+          );
         }
       }
     }
