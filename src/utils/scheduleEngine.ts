@@ -416,33 +416,23 @@ const buildBlockedData = async (
   }
 
   const bookings = await Booking.find(bookingFilter).select(
-    "scheduledStartDate scheduledExecutionEndDate scheduledBufferStartDate scheduledBufferEndDate scheduledBufferUnit executionEndDate bufferStartDate scheduledEndDate status"
+    "scheduledStartDate scheduledExecutionEndDate scheduledBufferStartDate scheduledBufferEndDate scheduledBufferUnit status"
   );
 
   bookings.forEach((booking) => {
     // Block the execution period
-    // Legacy field fallbacks are kept for older bookings until data is normalized.
-    const scheduledExecutionEndDate =
-      booking.scheduledExecutionEndDate || (booking as any).executionEndDate;
-    const scheduledBufferStartDate =
-      booking.scheduledBufferStartDate || (booking as any).bufferStartDate;
-    const scheduledBufferEndDate =
-      booking.scheduledBufferEndDate || (booking as any).scheduledEndDate;
-
-    if (booking.scheduledStartDate && scheduledExecutionEndDate) {
+    if (booking.scheduledStartDate && booking.scheduledExecutionEndDate) {
       blockedRanges.push({
         start: new Date(booking.scheduledStartDate),
-        end: new Date(scheduledExecutionEndDate),
+        end: new Date(booking.scheduledExecutionEndDate),
         reason: "booking",
       });
     }
     // Block the buffer period (if exists)
-    if (scheduledBufferStartDate && scheduledBufferEndDate && scheduledExecutionEndDate) {
-      // Don't extend buffer end date - use the actual scheduled end
-      // Extending to UTC 23:59:59 causes timezone issues (bleeds into next day in other timezones)
+    if (booking.scheduledBufferStartDate && booking.scheduledBufferEndDate && booking.scheduledExecutionEndDate) {
       blockedRanges.push({
-        start: new Date(scheduledBufferStartDate),
-        end: new Date(scheduledBufferEndDate),
+        start: new Date(booking.scheduledBufferStartDate),
+        end: new Date(booking.scheduledBufferEndDate),
         reason: "booking-buffer",
       });
     }
@@ -605,14 +595,6 @@ const assignBookingBlocks = (
   teamMemberIds: string[]
 ): void => {
   bookings.forEach((booking) => {
-    // Legacy field fallbacks for older bookings
-    const scheduledExecutionEndDate =
-      booking.scheduledExecutionEndDate || (booking as any).executionEndDate;
-    const scheduledBufferStartDate =
-      booking.scheduledBufferStartDate || (booking as any).bufferStartDate;
-    const scheduledBufferEndDate =
-      booking.scheduledBufferEndDate || (booking as any).scheduledEndDate;
-
     // Determine which team members are affected by this booking
     const affectedMembers = new Set<string>();
 
@@ -651,19 +633,19 @@ const assignBookingBlocks = (
       }
 
       // Block the execution period
-      if (booking.scheduledStartDate && scheduledExecutionEndDate) {
+      if (booking.scheduledStartDate && booking.scheduledExecutionEndDate) {
         memberData.blockedRanges.push({
           start: new Date(booking.scheduledStartDate),
-          end: new Date(scheduledExecutionEndDate),
+          end: new Date(booking.scheduledExecutionEndDate),
           reason: "booking",
         });
       }
 
       // Block the buffer period (if exists)
-      if (scheduledBufferStartDate && scheduledBufferEndDate && scheduledExecutionEndDate) {
+      if (booking.scheduledBufferStartDate && booking.scheduledBufferEndDate && booking.scheduledExecutionEndDate) {
         memberData.blockedRanges.push({
-          start: new Date(scheduledBufferStartDate),
-          end: new Date(scheduledBufferEndDate),
+          start: new Date(booking.scheduledBufferStartDate),
+          end: new Date(booking.scheduledBufferEndDate),
           reason: "booking-buffer",
         });
       }
@@ -744,7 +726,7 @@ const buildPerMemberBlockedData = async (
   }
 
   const bookings = await Booking.find(bookingFilter).select(
-    "scheduledStartDate scheduledExecutionEndDate scheduledBufferStartDate scheduledBufferEndDate scheduledBufferUnit executionEndDate bufferStartDate scheduledEndDate assignedTeamMembers professional project status"
+    "scheduledStartDate scheduledExecutionEndDate scheduledBufferStartDate scheduledBufferEndDate scheduledBufferUnit assignedTeamMembers professional project status"
   );
 
   // Step 4: Assign booking blocks to affected members
