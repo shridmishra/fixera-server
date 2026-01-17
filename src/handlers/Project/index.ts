@@ -402,8 +402,8 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
     // This prevents Mongoose CastError when project.resources contains invalid ObjectIds
     const validatedTeamMemberIds: mongoose.Types.ObjectId[] = [];
     if (Array.isArray(teamMemberIds)) {
-      for (const id of teamMemberIds) {
-        if (id == null) {
+      for (const memberId of teamMemberIds) {
+        if (memberId == null) {
           console.warn(
             `[getProjectTeamAvailability] Skipping null/undefined team member ID in project.resources for project ${project._id}`
           );
@@ -411,24 +411,24 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         }
 
         // Handle string IDs
-        if (typeof id === 'string') {
-          if (mongoose.isValidObjectId(id)) {
-            validatedTeamMemberIds.push(new mongoose.Types.ObjectId(id));
+        if (typeof memberId === 'string') {
+          if (mongoose.isValidObjectId(memberId)) {
+            validatedTeamMemberIds.push(new mongoose.Types.ObjectId(memberId));
           } else {
             console.warn(
-              `[getProjectTeamAvailability] Skipping invalid string team member ID "${id}" in project.resources for project ${project._id}`
+              `[getProjectTeamAvailability] Skipping invalid string team member ID "${memberId}" in project.resources for project ${project._id}`
             );
           }
           continue;
         }
 
         // Handle existing ObjectId instances or objects with toString
-        const idStr = String(id);
-        if (mongoose.isValidObjectId(idStr)) {
-          validatedTeamMemberIds.push(new mongoose.Types.ObjectId(idStr));
+        const memberIdStr = String(memberId);
+        if (mongoose.isValidObjectId(memberIdStr)) {
+          validatedTeamMemberIds.push(new mongoose.Types.ObjectId(memberIdStr));
         } else {
           console.warn(
-            `[getProjectTeamAvailability] Skipping invalid team member ID (type: ${typeof id}, value: ${idStr}) in project.resources for project ${project._id}`
+            `[getProjectTeamAvailability] Skipping invalid team member ID (type: ${typeof memberId}, value: ${memberIdStr}) in project.resources for project ${project._id}`
           );
         }
       }
@@ -751,9 +751,12 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
 
     // Apply resource policy logic with window-based throughput and overlap checks
     // Guard: if no resources are available, return early (matches schedule engine behavior)
-    if (totalResources === 0) {
+    // Check both totalResources (from policy) and validatedTeamMemberIds (actual valid ObjectIds)
+    // This handles cases where project.resources contains invalid IDs that fail validation
+    if (totalResources === 0 || validatedTeamMemberIds.length === 0) {
       console.warn(
-        `[getProjectTeamAvailability] Project ${project._id} has no resources (totalResources === 0). ` +
+        `[getProjectTeamAvailability] Project ${project._id} has no valid resources ` +
+        `(totalResources=${totalResources}, validatedTeamMemberIds.length=${validatedTeamMemberIds.length}). ` +
         `Returning no availability.`
       );
       return res.json({
@@ -766,7 +769,7 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
       });
     }
 
-    const useMultiResourceMode = totalResources > 0;
+    const useMultiResourceMode = validatedTeamMemberIds.length > 0;
     const requiredOverlap =
       minResources <= 1 ? 100 : resourcePolicy.minOverlapPercentage;
 
