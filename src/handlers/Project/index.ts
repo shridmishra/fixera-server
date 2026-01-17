@@ -646,6 +646,22 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
     });
 
     // Apply resource policy logic with window-based throughput and overlap checks
+    // Guard: if no resources are available, return early (matches schedule engine behavior)
+    if (totalResources === 0) {
+      console.warn(
+        `[getProjectTeamAvailability] Project ${project._id} has no resources (totalResources === 0). ` +
+        `Returning no availability.`
+      );
+      return res.json({
+        success: true,
+        blockedDates: [],
+        blockedRanges: [],
+        blockedCategories,
+        resourcePolicy,
+        noResources: true,
+      });
+    }
+
     const useMultiResourceMode = totalResources > 0;
     const requiredOverlap =
       minResources <= 1 ? 100 : resourcePolicy.minOverlapPercentage;
@@ -707,6 +723,27 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
       return totalResources - blockedCount;
     };
 
+    // Helper to count working days between two dates (inclusive) for throughput calculation
+    // This counts calendar working days (e.g., Mon-Fri), regardless of blocked status
+    const countWorkingDaysBetween = (startDateKey: string, endDateKey: string): number => {
+      const start = new Date(startDateKey);
+      const end = new Date(endDateKey);
+      let count = 0;
+      const maxIterations = 366 * 2; // Guard against infinite loops
+      let iterations = 0;
+
+      const cursor = new Date(start);
+      while (cursor <= end && iterations < maxIterations) {
+        const cursorKey = normalizeDateKey(cursor.toISOString());
+        if (isWorkingDay(cursorKey)) {
+          count++;
+        }
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+        iterations++;
+      }
+      return count;
+    };
+
     // Helper to check if a start date meets throughput and overlap constraints
     const isStartDateValid = (startDateKey: string): boolean => {
       if (!executionDays || executionDays <= 0) {
@@ -714,11 +751,11 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         return getAvailableResourceCount(startDateKey) >= minResources;
       }
 
-      // Simulate execution window from this start date
+      // Step 1: Find the execution end date by iterating day-by-day until we have
+      // counted enough working days to complete execution
       const startDate = new Date(startDateKey);
       let workingDaysCounted = 0;
-      let daysWithMinResources = 0;
-      let throughputWorkingDays = 0;
+      let endDateKey: string | null = null;
       const maxLookahead = executionDays * 4; // Safety limit
 
       const cursor = new Date(startDate);
@@ -726,23 +763,47 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         const cursorKey = normalizeDateKey(cursor.toISOString());
 
         if (isWorkingDay(cursorKey)) {
-          throughputWorkingDays++;
           workingDaysCounted++;
-
-          // Check if minResources are available on this day
-          const availableCount = getAvailableResourceCount(cursorKey);
-          if (availableCount >= minResources) {
-            daysWithMinResources++;
+          if (workingDaysCounted === executionDays) {
+            endDateKey = cursorKey;
+            break;
           }
         }
 
         cursor.setUTCDate(cursor.getUTCDate() + 1);
       }
 
+      // If we couldn't find enough working days, the date is invalid
+      if (!endDateKey) {
+        return false;
+      }
+
+      // Step 2: Compute throughputWorkingDays as calendar span from start to end
+      // This measures how many working days the execution would span in the calendar
+      const throughputWorkingDays = countWorkingDaysBetween(startDateKey, endDateKey);
+
       // Throughput constraint: must complete within execution * 2 working days
       const maxThroughput = executionDays * 2;
       if (throughputWorkingDays > maxThroughput) {
         return false;
+      }
+
+      // Step 3: Count daysWithMinResources by iterating from start to end
+      let daysWithMinResources = 0;
+      const overlapCursor = new Date(startDate);
+      const endDate = new Date(endDateKey);
+
+      while (overlapCursor <= endDate) {
+        const cursorKey = normalizeDateKey(overlapCursor.toISOString());
+
+        if (isWorkingDay(cursorKey)) {
+          const availableCount = getAvailableResourceCount(cursorKey);
+          if (availableCount >= minResources) {
+            daysWithMinResources++;
+          }
+        }
+
+        overlapCursor.setUTCDate(overlapCursor.getUTCDate() + 1);
       }
 
       // Overlap constraint: minResources must be available for >= requiredOverlap% of execution days
@@ -814,23 +875,65 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
 
     const blockedDatesArray = Array.from(allBlockedDates);
 
-    // Build per-date blocked members info for debug
-    const dateBlockedMembersDebug: Record<string, { blockedMemberIds: string[]; blockedMemberNames: string[] }> = {};
-    dateBlockedMembers.forEach((memberIds, dateKey) => {
-      const dateStr = dateKey.split('T')[0]; // Just the date part
-      dateBlockedMembersDebug[dateStr] = {
-        blockedMemberIds: Array.from(memberIds),
-        blockedMemberNames: Array.from(memberIds).map(id => teamMemberDebugInfo[id]?.name || 'Unknown'),
-      };
-    });
-
-    res.json({
+    // Build response
+    const response: any = {
       success: true,
       blockedDates: blockedDatesArray,
       blockedRanges: allBlockedRanges,
       blockedCategories,
       resourcePolicy,
-      _debug: {
+    };
+
+    // Only include _debug payload when explicitly enabled via environment variable or debug header
+    const debugEnabled =
+      process.env.ENABLE_DEBUG_PAYLOAD === 'true' ||
+      req.headers['x-debug-payload'] === process.env.DEBUG_PAYLOAD_SECRET;
+
+    if (debugEnabled && process.env.DEBUG_PAYLOAD_SECRET) {
+      // Build anonymization mapping: real member ID -> anonymized token
+      const memberIdToToken = new Map<string, string>();
+      let tokenCounter = 1;
+      const getAnonymizedToken = (memberId: string): string => {
+        if (!memberIdToToken.has(memberId)) {
+          memberIdToToken.set(memberId, `resource_${tokenCounter++}`);
+        }
+        return memberIdToToken.get(memberId)!;
+      };
+
+      // Build per-date blocked members info for debug (anonymized)
+      const dateBlockedMembersDebug: Record<string, { blockedCount: number; blockedTokens: string[] }> = {};
+      dateBlockedMembers.forEach((memberIds, dateKey) => {
+        const dateStr = dateKey.split('T')[0];
+        dateBlockedMembersDebug[dateStr] = {
+          blockedCount: memberIds.size,
+          blockedTokens: Array.from(memberIds).map(id => getAnonymizedToken(id)),
+        };
+      });
+
+      // Anonymize team member debug info (remove names and real IDs)
+      const teamMembersAnonymized: Record<string, {
+        personalBlockedDatesCount: number;
+        personalBlockedRangesCount: number;
+        bookingBlockedDatesCount: number;
+      }> = {};
+      Object.entries(teamMemberDebugInfo).forEach(([memberId, info]) => {
+        const token = getAnonymizedToken(memberId);
+        teamMembersAnonymized[token] = {
+          personalBlockedDatesCount: info.personalBlockedDates.length,
+          personalBlockedRangesCount: info.personalBlockedRanges.length,
+          bookingBlockedDatesCount: info.bookingBlockedDates.length,
+        };
+      });
+
+      // Anonymize bookings debug info (remove names and real IDs)
+      const bookingsAnonymized = bookingsDebugInfo.map((booking) => ({
+        scheduledStart: booking.scheduledStart,
+        scheduledEnd: booking.scheduledEnd,
+        blockedCount: booking.blockedMembers.length,
+        blockedTokens: booking.blockedMembers.map(id => getAnonymizedToken(id)),
+      }));
+
+      response._debug = {
         subprojectIndex,
         projectId: String(project._id),
         timeZone,
@@ -841,11 +944,13 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         minResources,
         totalResources,
         requiredOverlap,
-        teamMembers: teamMemberDebugInfo,
-        bookings: bookingsDebugInfo,
+        teamMembers: teamMembersAnonymized,
+        bookings: bookingsAnonymized,
         dateBlockedMembers: dateBlockedMembersDebug,
-      },
-    });
+      };
+    }
+
+    res.json(response);
   } catch (error) {
     console.error('Error fetching team availability:', error);
     res.status(500).json({
