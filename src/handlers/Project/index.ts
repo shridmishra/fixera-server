@@ -1,3 +1,4 @@
+//fixera-server/src/handlers/Project/index.ts
 import { Request, Response } from "express";
 import mongoose from "mongoose";
 import Project from "../../models/project";
@@ -305,6 +306,8 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
     const { id } = req.params;
     const startDate = req.query.startDate as string | undefined;
     const endDate = req.query.endDate as string | undefined;
+    const subprojectIndexRaw = req.query.subprojectIndex as string | undefined;
+    const subprojectIndex = subprojectIndexRaw !== undefined ? parseInt(subprojectIndexRaw, 10) : undefined;
 
     const project = await Project.findOne({
       _id: id,
@@ -411,13 +414,25 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
       });
     }
 
-    // Fetch team members
+    // Fetch team members (include name for debugging)
     const teamMembers =
       teamMemberIds.length > 0
         ? await User.find({
           _id: { $in: teamMemberIds },
-        }).select("_id blockedDates blockedRanges")
+        }).select("_id name blockedDates blockedRanges")
         : [];
+
+    // Build debug info for team members
+    const teamMemberDebugInfo: Record<string, { name: string; personalBlockedDates: string[]; personalBlockedRanges: any[]; bookingBlockedDates: string[] }> = {};
+    teamMembers.forEach((member) => {
+      const memberId = String(member._id);
+      teamMemberDebugInfo[memberId] = {
+        name: (member as any).name || 'Unknown',
+        personalBlockedDates: [],
+        personalBlockedRanges: [],
+        bookingBlockedDates: [],
+      };
+    });
 
     // Process personal blocked dates for each team member (tracked per-member)
     teamMembers.forEach((member) => {
@@ -429,6 +444,10 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
           if (!date) return;
           blockedCategories.personal.dates.push(date);
           markMemberBlocked(date, memberId);
+          // Add to debug info
+          if (teamMemberDebugInfo[memberId]) {
+            teamMemberDebugInfo[memberId].personalBlockedDates.push(date);
+          }
         });
       }
 
@@ -438,6 +457,10 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
           if (!blockedRange) return;
           blockedCategories.personal.ranges.push(blockedRange);
           expandRangeAndMarkBlocked(blockedRange.startDate, blockedRange.endDate, memberId);
+          // Add to debug info
+          if (teamMemberDebugInfo[memberId]) {
+            teamMemberDebugInfo[memberId].personalBlockedRanges.push(blockedRange);
+          }
         });
       }
     });
@@ -537,6 +560,15 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
       return false;
     };
 
+    // Debug: track bookings info
+    const bookingsDebugInfo: Array<{
+      bookingId: string;
+      scheduledStart: string | null;
+      scheduledEnd: string | null;
+      blockedMembers: string[];
+      blockedMemberNames: string[];
+    }> = [];
+
     // Track which bookings block which resources
     bookings.forEach((booking) => {
       const scheduledExecutionEndDate =
@@ -560,6 +592,17 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         });
       }
 
+      // Add to bookings debug info
+      if (blockedResourceIds.length > 0) {
+        bookingsDebugInfo.push({
+          bookingId: String(booking._id),
+          scheduledStart: booking.scheduledStartDate ? toIsoDate(booking.scheduledStartDate) : null,
+          scheduledEnd: scheduledExecutionEndDate ? toIsoDate(scheduledExecutionEndDate) : null,
+          blockedMembers: blockedResourceIds,
+          blockedMemberNames: blockedResourceIds.map(id => teamMemberDebugInfo[id]?.name || 'Unknown'),
+        });
+      }
+
       // Block the execution period for each blocked resource
       if (booking.scheduledStartDate && scheduledExecutionEndDate) {
         const blockedRange = toBlockedRange({
@@ -572,6 +615,16 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
           // Mark each blocked resource for each day in the range
           blockedResourceIds.forEach((resourceId) => {
             expandRangeAndMarkBlocked(blockedRange.startDate, blockedRange.endDate, resourceId);
+            // Add blocked dates to debug info
+            if (teamMemberDebugInfo[resourceId]) {
+              const start = new Date(blockedRange.startDate);
+              const end = new Date(blockedRange.endDate);
+              const cursor = new Date(start);
+              while (cursor <= end) {
+                teamMemberDebugInfo[resourceId].bookingBlockedDates.push(cursor.toISOString().split('T')[0]);
+                cursor.setUTCDate(cursor.getUTCDate() + 1);
+              }
+            }
           });
         }
       }
@@ -592,59 +645,206 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
       }
     });
 
-    // Apply resource policy logic to determine which dates are blocked
-    // minResources = 1: any one resource can cover the date
-    // minResources > 1 with overlap = 100%: block if available < minResources
-    // minResources > 1 with overlap < 100%: only block if 0 resources available
-    //   (partial availability might still meet overlap requirement over execution window)
+    // Apply resource policy logic with window-based throughput and overlap checks
     const useMultiResourceMode = totalResources > 0;
     const requiredOverlap =
       minResources <= 1 ? 100 : resourcePolicy.minOverlapPercentage;
-    const allowPartialAvailability = requiredOverlap < 100;
 
-    dateBlockedMembers.forEach((blockedMemberIds, dateIso) => {
-      const blockedCount = blockedMemberIds.size;
-      const availableResources = totalResources - blockedCount;
+    // Get execution duration from project or subprojects for window-based checks
+    let executionDays: number | null = null;
 
-      if (useMultiResourceMode) {
-        if (allowPartialAvailability) {
-          if (availableResources === 0) {
-            allBlockedDates.add(dateIso);
-            finalBlockedDateSet.add(dateIso); // 👈 ADD
-          }
-        } else {
-          if (availableResources < minResources) {
-            allBlockedDates.add(dateIso);
-            finalBlockedDateSet.add(dateIso); // 👈 ADD
+    const projectData = project as any;
+
+    // If subprojectIndex is provided, use that specific subproject's execution duration
+    if (typeof subprojectIndex === 'number' &&
+        !Number.isNaN(subprojectIndex) &&
+        projectData.subprojects &&
+        Array.isArray(projectData.subprojects) &&
+        projectData.subprojects[subprojectIndex]?.executionDuration?.value &&
+        projectData.subprojects[subprojectIndex]?.executionDuration?.unit === 'days') {
+      executionDays = Math.max(1, Math.ceil(projectData.subprojects[subprojectIndex].executionDuration.value));
+    } else if (projectData.executionDuration?.value && projectData.executionDuration?.unit === 'days') {
+      // Use project-level execution duration
+      executionDays = Math.max(1, Math.ceil(projectData.executionDuration.value));
+    } else if (projectData.subprojects && Array.isArray(projectData.subprojects)) {
+      // Fallback: use the maximum execution duration from all subprojects for conservative blocking
+      let maxExecution = 0;
+      for (const sp of projectData.subprojects) {
+        if (sp.executionDuration?.value && sp.executionDuration?.unit === 'days') {
+          maxExecution = Math.max(maxExecution, sp.executionDuration.value);
+        }
+      }
+      if (maxExecution > 0) {
+        executionDays = Math.ceil(maxExecution);
+      }
+    }
+
+    // Get working hours availability to determine working days
+    const availability = resolveAvailability(professional?.companyAvailability);
+
+    // Helper to check if a date is a working day (not weekend, not company blocked)
+    const isWorkingDay = (dateKey: string): boolean => {
+      // Check if it's in weekend dates
+      if (weekendDates.includes(dateKey)) return false;
+
+      // Check company blocked dates
+      if (blockedCategories.company.dates.some(d => normalizeDateKey(d) === dateKey)) return false;
+
+      // Check working hours availability
+      const date = new Date(dateKey);
+      const dayOfWeek = date.getUTCDay();
+      const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const dayAvailability = availability[dayNames[dayOfWeek]];
+      if (!dayAvailability || dayAvailability.available === false) return false;
+
+      return true;
+    };
+
+    // Helper to get available resource count for a date
+    const getAvailableResourceCount = (dateKey: string): number => {
+      const blockedMembers = dateBlockedMembers.get(dateKey);
+      const blockedCount = blockedMembers ? blockedMembers.size : 0;
+      return totalResources - blockedCount;
+    };
+
+    // Helper to check if a start date meets throughput and overlap constraints
+    const isStartDateValid = (startDateKey: string): boolean => {
+      if (!executionDays || executionDays <= 0) {
+        // No execution duration defined, fall back to simple resource check
+        return getAvailableResourceCount(startDateKey) >= minResources;
+      }
+
+      // Simulate execution window from this start date
+      const startDate = new Date(startDateKey);
+      let workingDaysCounted = 0;
+      let daysWithMinResources = 0;
+      let throughputWorkingDays = 0;
+      const maxLookahead = executionDays * 4; // Safety limit
+
+      const cursor = new Date(startDate);
+      for (let i = 0; i < maxLookahead && workingDaysCounted < executionDays; i++) {
+        const cursorKey = normalizeDateKey(cursor.toISOString());
+
+        if (isWorkingDay(cursorKey)) {
+          throughputWorkingDays++;
+          workingDaysCounted++;
+
+          // Check if minResources are available on this day
+          const availableCount = getAvailableResourceCount(cursorKey);
+          if (availableCount >= minResources) {
+            daysWithMinResources++;
           }
         }
-      } else {
-        // strict mode
-        allBlockedDates.add(dateIso);
-        finalBlockedDateSet.add(dateIso); // 👈 ADD
+
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
       }
 
-    });
-
-    blockedCategories.personal.ranges.forEach((range) => {
-      if (rangeIntersectsBlockedDates(range)) {
-        allBlockedRanges.push(range);
+      // Throughput constraint: must complete within execution * 2 working days
+      const maxThroughput = executionDays * 2;
+      if (throughputWorkingDays > maxThroughput) {
+        return false;
       }
-    });
 
-    blockedCategories.bookings.ranges.forEach((range) => {
-      if (rangeIntersectsBlockedDates(range)) {
-        allBlockedRanges.push(range);
+      // Overlap constraint: minResources must be available for >= requiredOverlap% of execution days
+      const overlapPercentage = (daysWithMinResources / executionDays) * 100;
+      if (overlapPercentage < requiredOverlap) {
+        return false;
       }
-    });
 
+      return true;
+    };
+
+    // For each date in the range, check if it's a valid start date
+    if (useMultiResourceMode && executionDays && executionDays > 0) {
+      // Window-based check for multi-resource projects
+      const cursor = new Date(rangeStart);
+      while (cursor <= rangeEnd) {
+        const dateKey = normalizeDateKey(cursor.toISOString());
+
+        // Skip weekends and company blocked dates (already in allBlockedDates)
+        if (!allBlockedDates.has(dateKey) && isWorkingDay(dateKey)) {
+          const isValid = isStartDateValid(dateKey);
+          if (!isValid) {
+            allBlockedDates.add(dateKey);
+            finalBlockedDateSet.add(dateKey);
+          }
+        }
+
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+    } else {
+      // Simple per-day check for single resource or no execution duration
+      dateBlockedMembers.forEach((blockedMemberIds, dateIso) => {
+        const blockedCount = blockedMemberIds.size;
+        const availableResources = totalResources - blockedCount;
+
+        if (useMultiResourceMode) {
+          if (availableResources < minResources) {
+            allBlockedDates.add(dateIso);
+            finalBlockedDateSet.add(dateIso);
+          }
+        } else {
+          // strict mode - any blocked member blocks the date
+          allBlockedDates.add(dateIso);
+          finalBlockedDateSet.add(dateIso);
+        }
+      });
+    }
+
+    // In multi-resource mode with window-based checking, don't add individual booking/personal ranges
+    // because the window-based overlap check already determines which start dates are valid.
+    // Adding these ranges would cause the frontend to double-block dates that passed the overlap check.
+    const useWindowBasedCheck = useMultiResourceMode && executionDays && executionDays > 0;
+
+    if (!useWindowBasedCheck) {
+      // Only add ranges in simple mode (single resource or no execution duration)
+      blockedCategories.personal.ranges.forEach((range) => {
+        if (rangeIntersectsBlockedDates(range)) {
+          allBlockedRanges.push(range);
+        }
+      });
+
+      blockedCategories.bookings.ranges.forEach((range) => {
+        if (rangeIntersectsBlockedDates(range)) {
+          allBlockedRanges.push(range);
+        }
+      });
+    }
+
+
+    const blockedDatesArray = Array.from(allBlockedDates);
+
+    // Build per-date blocked members info for debug
+    const dateBlockedMembersDebug: Record<string, { blockedMemberIds: string[]; blockedMemberNames: string[] }> = {};
+    dateBlockedMembers.forEach((memberIds, dateKey) => {
+      const dateStr = dateKey.split('T')[0]; // Just the date part
+      dateBlockedMembersDebug[dateStr] = {
+        blockedMemberIds: Array.from(memberIds),
+        blockedMemberNames: Array.from(memberIds).map(id => teamMemberDebugInfo[id]?.name || 'Unknown'),
+      };
+    });
 
     res.json({
       success: true,
-      blockedDates: Array.from(allBlockedDates),
+      blockedDates: blockedDatesArray,
       blockedRanges: allBlockedRanges,
       blockedCategories,
       resourcePolicy,
+      _debug: {
+        subprojectIndex,
+        projectId: String(project._id),
+        timeZone,
+        totalBlockedDates: blockedDatesArray.length,
+        totalBlockedRanges: allBlockedRanges.length,
+        useWindowBasedCheck,
+        executionDays,
+        minResources,
+        totalResources,
+        requiredOverlap,
+        teamMembers: teamMemberDebugInfo,
+        bookings: bookingsDebugInfo,
+        dateBlockedMembers: dateBlockedMembersDebug,
+      },
     });
   } catch (error) {
     console.error('Error fetching team availability:', error);
