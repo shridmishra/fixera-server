@@ -4,6 +4,7 @@ import Booking from "../models/booking";
 import Project from "../models/project";
 import User from "../models/user";
 import { DEFAULT_AVAILABILITY, resolveAvailability } from "./availabilityHelpers";
+import { DateTime } from "luxon";
 
 type DurationUnit = "hours" | "days";
 
@@ -126,44 +127,65 @@ export const validateAndDedupeResourceIds = (
   return orderedIds.map((id) => new mongoose.Types.ObjectId(id));
 };
 
-export const getTimeZoneOffsetMinutes = (date: Date, timeZone: string) => {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
+/**
+ * Convert a UTC Date to a "zoned" Date where UTC methods return local time values.
+ * This is equivalent to date-fns-tz's toZonedTime.
+ *
+ * Example: If utcDate is 2024-03-15T10:00:00Z and timeZone is "America/New_York" (UTC-4),
+ * the result's getUTCHours() will return 6 (the local hour in New York).
+ *
+ * @throws Error if the timezone is invalid or the DateTime cannot be created
+ */
+export const toZonedTime = (date: Date, timeZone: string): Date => {
+  const dt = DateTime.fromJSDate(date, { zone: "utc" }).setZone(timeZone);
+  if (!dt.isValid) {
+    throw new Error(
+      `toZonedTime: Invalid DateTime produced for timezone "${timeZone}". ` +
+      `Reason: ${dt.invalidReason || "unknown"}, Explanation: ${dt.invalidExplanation || "none"}`
+    );
+  }
+  // Create a new Date using the local time components as if they were UTC
+  return new Date(Date.UTC(
+    dt.year,
+    dt.month - 1, // Luxon months are 1-indexed, Date.UTC expects 0-indexed
+    dt.day,
+    dt.hour,
+    dt.minute,
+    dt.second,
+    dt.millisecond
+  ));
+};
 
-  const parts = formatter.formatToParts(date);
-  const partLookup: Record<string, string> = {};
-  parts.forEach((part) => {
-    partLookup[part.type] = part.value;
-  });
-
-  const utcTime = Date.UTC(
-    Number(partLookup.year),
-    Number(partLookup.month) - 1,
-    Number(partLookup.day),
-    Number(partLookup.hour),
-    Number(partLookup.minute),
-    Number(partLookup.second)
+/**
+ * Convert a "zoned" Date (where UTC methods represent local time) back to actual UTC.
+ * This is equivalent to date-fns-tz's fromZonedTime.
+ *
+ * Example: If zonedDate's getUTCHours() returns 6 and timeZone is "America/New_York" (UTC-4),
+ * the result will be the actual UTC time: 2024-03-15T10:00:00Z.
+ *
+ * @throws Error if the timezone is invalid or the DateTime cannot be created
+ */
+export const fromZonedTime = (zonedDate: Date, timeZone: string): Date => {
+  // Interpret the UTC components of zonedDate as local time in the target timezone
+  const dt = DateTime.fromObject(
+    {
+      year: zonedDate.getUTCFullYear(),
+      month: zonedDate.getUTCMonth() + 1, // Luxon months are 1-indexed
+      day: zonedDate.getUTCDate(),
+      hour: zonedDate.getUTCHours(),
+      minute: zonedDate.getUTCMinutes(),
+      second: zonedDate.getUTCSeconds(),
+      millisecond: zonedDate.getUTCMilliseconds(),
+    },
+    { zone: timeZone }
   );
-
-  return (utcTime - date.getTime()) / 60000;
-};
-
-export const toZonedTime = (date: Date, timeZone: string) => {
-  const offsetMinutes = getTimeZoneOffsetMinutes(date, timeZone);
-  return new Date(date.getTime() + offsetMinutes * 60000);
-};
-
-export const fromZonedTime = (zonedDate: Date, timeZone: string) => {
-  const offsetMinutes = getTimeZoneOffsetMinutes(zonedDate, timeZone);
-  return new Date(zonedDate.getTime() - offsetMinutes * 60000);
+  if (!dt.isValid) {
+    throw new Error(
+      `fromZonedTime: Invalid DateTime produced for timezone "${timeZone}". ` +
+      `Reason: ${dt.invalidReason || "unknown"}, Explanation: ${dt.invalidExplanation || "none"}`
+    );
+  }
+  return dt.toJSDate();
 };
 
 const startOfDayZoned = (zonedDate: Date) =>
@@ -1857,6 +1879,13 @@ export const buildProjectScheduleProposalsWithData = async (
     timeZone
   );
 
+  // Collect company-only blocked dates and ranges for multi-resource start date validation
+  // Personal/customer blocks should not veto multi-resource start dates - only company-level blocks should
+  const { companyBlockedDates, companyBlockedRanges } = collectCompanyBlocks(professional, timeZone);
+
+  // Debug flag for verbose schedule proposal logging (set via environment variable)
+  const enableScheduleDebug = process.env.ENABLE_SCHEDULE_DEBUG === "true";
+
   // Build per-member blocked data if in multi-resource mode
   let perMemberBlocked: PerMemberBlockedData | undefined;
   if (useMultiResource) {
@@ -1963,7 +1992,37 @@ export const buildProjectScheduleProposalsWithData = async (
       // the overlap percentage requirement (matching availability endpoint logic).
       if (useMultiResource && perMemberBlocked && resourcePolicy) {
         // Still require it to be a working day
-        if (!isWorkingDay(availability, currentDay)) {
+        const isWorking = isWorkingDay(availability, currentDay);
+        if (enableScheduleDebug) {
+          const dayOfWeekNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+          const dayOfWeek = dayOfWeekNames[currentDay.getUTCDay()];
+          console.log(`[SCHEDULE_PROPOSALS] Checking date: ${formatDateKey(currentDay)} (${dayOfWeek}), isWorkingDay: ${isWorking}`);
+        }
+
+        if (!isWorking) {
+          continue;
+        }
+
+        // Skip dates that are company-blocked (dates or ranges) - they cannot be start dates
+        // Only company-level blocks veto multi-resource start dates (not personal/customer blocks)
+        // Personal blocks are handled by the per-member overlap calculation
+        const dateKey = formatDateKey(currentDay);
+        if (companyBlockedDates.has(dateKey)) {
+          if (enableScheduleDebug) {
+            console.log(`[SCHEDULE_PROPOSALS] Skipping ${dateKey} - date is company-blocked`);
+          }
+          continue;
+        }
+
+        // Also check company blocked ranges (e.g., holiday weeks)
+        const currentDayUtc = fromZonedTime(currentDay, timeZone);
+        const isInCompanyBlockedRange = companyBlockedRanges.some((range) => {
+          return currentDayUtc >= range.start && currentDayUtc <= range.end;
+        });
+        if (isInCompanyBlockedRange) {
+          if (enableScheduleDebug) {
+            console.log(`[SCHEDULE_PROPOSALS] Skipping ${dateKey} - date is within a company-blocked range`);
+          }
           continue;
         }
 
@@ -2000,7 +2059,9 @@ export const buildProjectScheduleProposalsWithData = async (
       // Only set earliestBookableDate after passing ALL checks
       if (!earliestBookableDate) {
         earliestBookableDate = startOfDayZoned(currentDay);
-        console.log('[SCHEDULE_PROPOSALS] Earliest bookable date found:', formatDateKey(earliestBookableDate));
+        if (enableScheduleDebug) {
+          console.log('[SCHEDULE_PROPOSALS] Earliest bookable date found:', formatDateKey(earliestBookableDate));
+        }
       }
 
       const executionEndDay = advanceWorkingDays(
@@ -2054,14 +2115,24 @@ export const buildProjectScheduleProposalsWithData = async (
             timeZone
           );
           const bufferEndUtc = fromZonedTime(bufferEndZoned, timeZone);
-          console.log('[SCHEDULE_PROPOSALS] New shortest window found:', {
-            startDateZoned: formatDateKey(currentDay),
-            executionEndDateZoned: formatDateKey(executionEndDay),
-            throughputDays,
-            executionDays,
-          });
+          const startUtc = fromZonedTime(currentDay, timeZone);
+          if (enableScheduleDebug) {
+            const dayOfWeekNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const zonedDayOfWeek = dayOfWeekNames[currentDay.getUTCDay()];
+            const utcDayOfWeek = dayOfWeekNames[startUtc.getUTCDay()];
+            console.log('[SCHEDULE_PROPOSALS] New shortest window found:', {
+              startDateZoned: formatDateKey(currentDay),
+              zonedDayOfWeek,
+              startDateUtc: startUtc.toISOString(),
+              utcDayOfWeek,
+              executionEndDateZoned: formatDateKey(executionEndDay),
+              throughputDays,
+              executionDays,
+              timeZone,
+            });
+          }
           shortestProposal = {
-            start: fromZonedTime(currentDay, timeZone).toISOString(),
+            start: startUtc.toISOString(),
             end: bufferEndUtc.toISOString(),
             executionEnd: executionEndUtc.toISOString(),
           };
