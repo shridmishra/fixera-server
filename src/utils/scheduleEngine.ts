@@ -1879,9 +1879,12 @@ export const buildProjectScheduleProposalsWithData = async (
     timeZone
   );
 
-  // Collect company-only blocked dates for multi-resource start date validation
+  // Collect company-only blocked dates and ranges for multi-resource start date validation
   // Personal/customer blocks should not veto multi-resource start dates - only company-level blocks should
-  const { companyBlockedDates } = collectCompanyBlocks(professional, timeZone);
+  const { companyBlockedDates, companyBlockedRanges } = collectCompanyBlocks(professional, timeZone);
+
+  // Debug flag for verbose schedule proposal logging (set via environment variable)
+  const enableScheduleDebug = process.env.ENABLE_SCHEDULE_DEBUG === "true";
 
   // Build per-member blocked data if in multi-resource mode
   let perMemberBlocked: PerMemberBlockedData | undefined;
@@ -1989,21 +1992,37 @@ export const buildProjectScheduleProposalsWithData = async (
       // the overlap percentage requirement (matching availability endpoint logic).
       if (useMultiResource && perMemberBlocked && resourcePolicy) {
         // Still require it to be a working day
-        const dayOfWeekNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        const dayOfWeek = dayOfWeekNames[currentDay.getUTCDay()];
         const isWorking = isWorkingDay(availability, currentDay);
-        console.log(`[SCHEDULE_PROPOSALS] Checking date: ${formatDateKey(currentDay)} (${dayOfWeek}), isWorkingDay: ${isWorking}`);
+        if (enableScheduleDebug) {
+          const dayOfWeekNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+          const dayOfWeek = dayOfWeekNames[currentDay.getUTCDay()];
+          console.log(`[SCHEDULE_PROPOSALS] Checking date: ${formatDateKey(currentDay)} (${dayOfWeek}), isWorkingDay: ${isWorking}`);
+        }
 
         if (!isWorking) {
           continue;
         }
 
-        // Skip dates that are company-blocked - they cannot be start dates
+        // Skip dates that are company-blocked (dates or ranges) - they cannot be start dates
         // Only company-level blocks veto multi-resource start dates (not personal/customer blocks)
         // Personal blocks are handled by the per-member overlap calculation
         const dateKey = formatDateKey(currentDay);
         if (companyBlockedDates.has(dateKey)) {
-          console.log(`[SCHEDULE_PROPOSALS] Skipping ${dateKey} - date is company-blocked`);
+          if (enableScheduleDebug) {
+            console.log(`[SCHEDULE_PROPOSALS] Skipping ${dateKey} - date is company-blocked`);
+          }
+          continue;
+        }
+
+        // Also check company blocked ranges (e.g., holiday weeks)
+        const currentDayUtc = fromZonedTime(currentDay, timeZone);
+        const isInCompanyBlockedRange = companyBlockedRanges.some((range) => {
+          return currentDayUtc >= range.start && currentDayUtc <= range.end;
+        });
+        if (isInCompanyBlockedRange) {
+          if (enableScheduleDebug) {
+            console.log(`[SCHEDULE_PROPOSALS] Skipping ${dateKey} - date is within a company-blocked range`);
+          }
           continue;
         }
 
@@ -2040,7 +2059,9 @@ export const buildProjectScheduleProposalsWithData = async (
       // Only set earliestBookableDate after passing ALL checks
       if (!earliestBookableDate) {
         earliestBookableDate = startOfDayZoned(currentDay);
-        console.log('[SCHEDULE_PROPOSALS] Earliest bookable date found:', formatDateKey(earliestBookableDate));
+        if (enableScheduleDebug) {
+          console.log('[SCHEDULE_PROPOSALS] Earliest bookable date found:', formatDateKey(earliestBookableDate));
+        }
       }
 
       const executionEndDay = advanceWorkingDays(
@@ -2095,19 +2116,21 @@ export const buildProjectScheduleProposalsWithData = async (
           );
           const bufferEndUtc = fromZonedTime(bufferEndZoned, timeZone);
           const startUtc = fromZonedTime(currentDay, timeZone);
-          const dayOfWeekNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-          const zonedDayOfWeek = dayOfWeekNames[currentDay.getUTCDay()];
-          const utcDayOfWeek = dayOfWeekNames[startUtc.getUTCDay()];
-          console.log('[SCHEDULE_PROPOSALS] New shortest window found:', {
-            startDateZoned: formatDateKey(currentDay),
-            zonedDayOfWeek,
-            startDateUtc: startUtc.toISOString(),
-            utcDayOfWeek,
-            executionEndDateZoned: formatDateKey(executionEndDay),
-            throughputDays,
-            executionDays,
-            timeZone,
-          });
+          if (enableScheduleDebug) {
+            const dayOfWeekNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const zonedDayOfWeek = dayOfWeekNames[currentDay.getUTCDay()];
+            const utcDayOfWeek = dayOfWeekNames[startUtc.getUTCDay()];
+            console.log('[SCHEDULE_PROPOSALS] New shortest window found:', {
+              startDateZoned: formatDateKey(currentDay),
+              zonedDayOfWeek,
+              startDateUtc: startUtc.toISOString(),
+              utcDayOfWeek,
+              executionEndDateZoned: formatDateKey(executionEndDay),
+              throughputDays,
+              executionDays,
+              timeZone,
+            });
+          }
           shortestProposal = {
             start: startUtc.toISOString(),
             end: bufferEndUtc.toISOString(),
