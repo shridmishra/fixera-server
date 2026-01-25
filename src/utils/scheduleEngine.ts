@@ -931,9 +931,15 @@ const isMemberAvailableForWindow = (
   return !memberTimeOverlapsRanges(memberData, startUtc, endUtc, timeZone);
 };
 
+type DaysOverlapResult = {
+  overlapPercentage: number;
+  canComplete: boolean;
+};
+
 /**
- * Compute overlap percentage for days mode.
- * Returns the percentage of execution days where all members in the subset are available.
+ * Compute overlap percentage for days mode with an optional throughput cap.
+ * Overlap is measured against required execution days. Completion is only
+ * possible if enough fully-available days are found within the throughput cap.
  */
 const computeDaysOverlapPercentage = (
   perMemberBlocked: PerMemberBlockedData,
@@ -941,20 +947,32 @@ const computeDaysOverlapPercentage = (
   startZoned: Date,
   executionDays: number,
   memberIds: string[],
-  timeZone: string
-): number => {
-  if (executionDays <= 0) return 100;
+  timeZone: string,
+  maxThroughputDays?: number
+): DaysOverlapResult => {
+  if (executionDays <= 0) {
+    return { overlapPercentage: 100, canComplete: true };
+  }
+
+  const throughputLimit = Math.max(
+    executionDays,
+    typeof maxThroughputDays === 'number' ? maxThroughputDays : executionDays
+  );
 
   let availableDays = 0;
+  let workingDays = 0;
   let cursor = startZoned;
-  let daysCounted = 0;
   const maxIterations = 366 * 2; // Guard against infinite loops
   let iterations = 0;
 
-  while (daysCounted < executionDays && iterations < maxIterations) {
+  while (
+    workingDays < throughputLimit &&
+    iterations < maxIterations &&
+    availableDays < executionDays
+  ) {
     iterations++;
-    // Only count working days
     if (isWorkingDay(availability, cursor)) {
+      workingDays++;
       const allAvailable = memberIds.every((memberId) => {
         const memberData = perMemberBlocked.get(memberId);
         return memberData
@@ -964,12 +982,14 @@ const computeDaysOverlapPercentage = (
       if (allAvailable) {
         availableDays++;
       }
-      daysCounted++;
     }
     cursor = addDaysZoned(cursor, 1);
   }
 
-  return (availableDays / executionDays) * 100;
+  return {
+    overlapPercentage: (availableDays / executionDays) * 100,
+    canComplete: availableDays >= executionDays,
+  };
 };
 
 /**
@@ -1096,19 +1116,21 @@ const findFirstEligibleSubsetForDays = (
   timeZone: string
 ): string[] | null => {
   const requiredOverlap = getRequiredOverlapPercentage(resourcePolicy);
+  const maxThroughputDays = executionDays * 2;
   let selectedSubset: string[] | null = null;
 
   forEachSubset(resourceIds, resourcePolicy.minResources, (subset) => {
-    const overlapPercentage = computeDaysOverlapPercentage(
+    const { overlapPercentage, canComplete } = computeDaysOverlapPercentage(
       perMemberBlocked,
       availability,
       startZoned,
       executionDays,
       subset,
-      timeZone
+      timeZone,
+      maxThroughputDays
     );
 
-    if (overlapPercentage >= requiredOverlap) {
+    if (canComplete && overlapPercentage >= requiredOverlap) {
       selectedSubset = subset;
       return true;
     }
@@ -1178,15 +1200,17 @@ const computeBestOverlapPercentageForDays = (
   timeZone: string
 ): number => {
   let bestOverlap = 0;
+  const maxThroughputDays = executionDays * 2;
 
   forEachSubset(resourceIds, resourcePolicy.minResources, (subset) => {
-    const overlapPercentage = computeDaysOverlapPercentage(
+    const { overlapPercentage } = computeDaysOverlapPercentage(
       perMemberBlocked,
       availability,
       startZoned,
       executionDays,
       subset,
-      timeZone
+      timeZone,
+      maxThroughputDays
     );
     if (overlapPercentage > bestOverlap) {
       bestOverlap = overlapPercentage;

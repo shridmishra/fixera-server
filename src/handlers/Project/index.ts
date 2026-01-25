@@ -689,18 +689,37 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
       const scheduledBufferEndDate =
         booking.scheduledBufferEndDate || (booking as any).scheduledEndDate;
 
-      // Find which of our project's resources are blocked by this booking
+      // Find which of our project's resources are blocked by this booking.
+      // Match scheduleEngine legacy logic for bookings without assigned team members.
       const blockedResourceIds: string[] = [];
 
-      // Only assignedTeamMembers are actually working on the booking and should be blocked
-      // The professional field is the project owner, not necessarily a worker
-      if (booking.assignedTeamMembers) {
-        booking.assignedTeamMembers.forEach((memberId: any) => {
+      const assignedTeamMembers = Array.isArray(booking.assignedTeamMembers)
+        ? booking.assignedTeamMembers
+        : [];
+      const hasAssignedMembers = assignedTeamMembers.length > 0;
+
+      if (hasAssignedMembers) {
+        assignedTeamMembers.forEach((memberId: any) => {
           const memberIdStr = String(memberId);
           if (projectResources.has(memberIdStr)) {
             blockedResourceIds.push(memberIdStr);
           }
         });
+      } else {
+        // Legacy: fall back to professional or project match
+        if (booking.professional) {
+          const profIdStr = String(booking.professional);
+          if (projectResources.has(profIdStr)) {
+            blockedResourceIds.push(profIdStr);
+          }
+        }
+
+        const projectId = String(project._id);
+        if (booking.project && String(booking.project) === projectId) {
+          projectResources.forEach((resourceId) => {
+            blockedResourceIds.push(resourceId);
+          });
+        }
       }
 
       // Add to bookings debug info
@@ -890,68 +909,37 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         return getAvailableResourceCount(startDateKey) >= minResources;
       }
 
-      // Step 1: Find the execution end date by iterating day-by-day until we have
-      // counted enough working days to complete execution
+      // Step 1: Walk forward until we either find enough fully-available days
+      // or exceed the throughput cap (executionDays * 2 working days).
       const startDate = new Date(startDateKey);
+      const maxThroughput = executionDays * 2;
       let workingDaysCounted = 0;
-      let endDateKey: string | null = null;
-      const maxLookahead = executionDays * 4; // Safety limit
-
+      let daysWithMinResources = 0;
       const cursor = new Date(startDate);
-      for (let i = 0; i < maxLookahead && workingDaysCounted < executionDays; i++) {
+      const maxIterations = 366 * 2; // Safety guard
+      let iterations = 0;
+
+      while (
+        workingDaysCounted < maxThroughput &&
+        daysWithMinResources < executionDays &&
+        iterations < maxIterations
+      ) {
+        iterations++;
         const cursorKey = normalizeDateKey(cursor.toISOString());
 
         if (isWorkingDay(cursorKey)) {
           workingDaysCounted++;
-          if (workingDaysCounted === executionDays) {
-            endDateKey = cursorKey;
-            break;
-          }
-        }
-
-        cursor.setUTCDate(cursor.getUTCDate() + 1);
-      }
-
-      // If we couldn't find enough working days, the date is invalid
-      if (!endDateKey) {
-        return false;
-      }
-
-      // Step 2: Compute throughputWorkingDays as calendar span from start to end
-      // This measures how many working days the execution would span in the calendar
-      const throughputWorkingDays = countWorkingDaysBetween(startDateKey, endDateKey);
-
-      // Throughput constraint: must complete within execution * 2 working days
-      const maxThroughput = executionDays * 2;
-      if (throughputWorkingDays > maxThroughput) {
-        return false;
-      }
-
-      // Step 3: Count daysWithMinResources by iterating from start to end
-      let daysWithMinResources = 0;
-      const overlapCursor = new Date(startDate);
-      const endDate = new Date(endDateKey);
-
-      while (overlapCursor <= endDate) {
-        const cursorKey = normalizeDateKey(overlapCursor.toISOString());
-
-        if (isWorkingDay(cursorKey)) {
           const availableCount = getAvailableResourceCount(cursorKey);
           if (availableCount >= minResources) {
             daysWithMinResources++;
           }
         }
 
-        overlapCursor.setUTCDate(overlapCursor.getUTCDate() + 1);
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
       }
 
-      // Overlap constraint: minResources must be available for >= requiredOverlap% of execution days
-      const overlapPercentage = (daysWithMinResources / executionDays) * 100;
-      if (overlapPercentage < requiredOverlap) {
-        return false;
-      }
-
-      return true;
+      // Valid only if we can complete within the throughput cap.
+      return daysWithMinResources >= executionDays;
     };
 
     // Debug: Log resource policy and blocked data summary (gated behind debug flag)
