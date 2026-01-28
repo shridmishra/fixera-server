@@ -939,7 +939,8 @@ type DaysOverlapResult = {
 /**
  * Compute overlap percentage for days mode with an optional throughput cap.
  * Overlap is measured against required execution days. Completion is only
- * possible if enough fully-available days are found within the throughput cap.
+ * possible if enough fully-available days are found within the evaluated window.
+ * When no cap is provided, we evaluate up to a generous safety ceiling.
  */
 const computeDaysOverlapPercentage = (
   perMemberBlocked: PerMemberBlockedData,
@@ -954,21 +955,20 @@ const computeDaysOverlapPercentage = (
     return { overlapPercentage: 100, canComplete: true };
   }
 
-  const throughputLimit = Math.max(
-    executionDays,
-    typeof maxThroughputDays === 'number' ? maxThroughputDays : executionDays
-  );
-
   let availableDays = 0;
   let workingDays = 0;
   let cursor = startZoned;
-  const maxIterations = 366 * 2; // Guard against infinite loops
+  const workingDayCap =
+    typeof maxThroughputDays === 'number'
+      ? Math.max(executionDays, maxThroughputDays)
+      : Number.POSITIVE_INFINITY;
+  const maxIterations = 366 * 5; // Guard against infinite loops without capping throughput
   let iterations = 0;
 
   while (
-    workingDays < throughputLimit &&
     iterations < maxIterations &&
-    availableDays < executionDays
+    availableDays < executionDays &&
+    workingDays < workingDayCap
   ) {
     iterations++;
     if (isWorkingDay(availability, cursor)) {
@@ -1116,7 +1116,6 @@ const findFirstEligibleSubsetForDays = (
   timeZone: string
 ): string[] | null => {
   const requiredOverlap = getRequiredOverlapPercentage(resourcePolicy);
-  const maxThroughputDays = executionDays * 2;
   let selectedSubset: string[] | null = null;
 
   forEachSubset(resourceIds, resourcePolicy.minResources, (subset) => {
@@ -1126,8 +1125,7 @@ const findFirstEligibleSubsetForDays = (
       startZoned,
       executionDays,
       subset,
-      timeZone,
-      maxThroughputDays
+      timeZone
     );
 
     if (canComplete && overlapPercentage >= requiredOverlap) {
@@ -1200,7 +1198,6 @@ const computeBestOverlapPercentageForDays = (
   timeZone: string
 ): number => {
   let bestOverlap = 0;
-  const maxThroughputDays = executionDays * 2;
 
   forEachSubset(resourceIds, resourcePolicy.minResources, (subset) => {
     const { overlapPercentage } = computeDaysOverlapPercentage(
@@ -1209,8 +1206,7 @@ const computeBestOverlapPercentageForDays = (
       startZoned,
       executionDays,
       subset,
-      timeZone,
-      maxThroughputDays
+      timeZone
     );
     if (overlapPercentage > bestOverlap) {
       bestOverlap = overlapPercentage;
@@ -2541,6 +2537,15 @@ export const buildProjectScheduleWindow = async ({
 
     // Convert execution end once and reuse to avoid any precision differences
     const executionEndUtc = fromZonedTime(executionEndZoned, timeZone);
+    const executionStartDay = startOfDayZoned(selectedZoned);
+    const executionEndDay = startOfDayZoned(
+      toZonedTime(executionEndUtc, timeZone)
+    );
+    const throughputDays = countWorkingDaysBetween(
+      executionStartDay,
+      executionEndDay,
+      availability
+    );
 
     const assignedTeamMembers = selectedSubset
       ? validateAndDedupeResourceIds(selectedSubset)
@@ -2562,6 +2567,7 @@ export const buildProjectScheduleWindow = async ({
         minutes + Math.round(durations.execution.value * 60)
       ),
       assignedTeamMembers,
+      throughputDays,
     };
   }
 
@@ -2657,6 +2663,11 @@ export const buildProjectScheduleWindow = async ({
     executionEndDateZoned: formatDateKey(executionEndDay),
     executionDays,
   });
+  const throughputDays = countWorkingDaysBetween(
+    selectedZoned,
+    executionEndDay,
+    availability
+  );
 
   const executionHours = getWorkingHoursForDate(availability, executionEndDay);
   const executionEndMinutes =
@@ -2699,5 +2710,6 @@ export const buildProjectScheduleWindow = async ({
       : executionEndUtc,
     scheduledBufferUnit: durations.buffer?.unit,
     assignedTeamMembers,
+    throughputDays,
   };
 };

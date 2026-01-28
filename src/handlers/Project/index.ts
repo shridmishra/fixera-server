@@ -910,31 +910,29 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         return getAvailableResourceCount(startDateKey) >= minResources;
       }
 
-      // Step 1: Walk forward until we either find enough fully-available days
-      // or exceed the throughput cap (executionDays * 2 working days).
+      // Walk forward until we find enough fully-available working days.
+      // We intentionally do NOT cap by throughput here; throughput is a
+      // suggestion concern, not an availability blocker.
       const startDate = new Date(startDateKey);
-      const maxThroughput = executionDays * 2;
-      let workingDaysCounted = 0;
+      if (Number.isNaN(startDate.getTime())) {
+        return false;
+      }
+      const rangeEndKey = normalizeDateKey(rangeEnd.toISOString());
+      const rangeEndDate = rangeEndKey ? new Date(rangeEndKey) : new Date(rangeEnd);
       let daysWithMinResources = 0;
       const cursor = new Date(startDate);
-      const SAFETY_BUFFER_DAYS = 30;
-      const SAFETY_CEILING = 366 * 5;
-      const maxIterations = Math.min(
-        maxThroughput * 2 + SAFETY_BUFFER_DAYS,
-        SAFETY_CEILING
-      );
+      const SAFETY_CEILING_DAYS = 366 * 5;
       let iterations = 0;
 
       while (
-        workingDaysCounted < maxThroughput &&
         daysWithMinResources < executionDays &&
-        iterations < maxIterations
+        iterations < SAFETY_CEILING_DAYS &&
+        cursor <= rangeEndDate
       ) {
         iterations++;
         const cursorKey = normalizeDateKey(cursor.toISOString());
 
         if (isWorkingDay(cursorKey)) {
-          workingDaysCounted++;
           const availableCount = getAvailableResourceCount(cursorKey);
           if (availableCount >= minResources) {
             daysWithMinResources++;
@@ -944,7 +942,7 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         cursor.setUTCDate(cursor.getUTCDate() + 1);
       }
 
-      // Valid only if we can complete within the throughput cap.
+      // Valid only if we can complete within the known evaluation window.
       return daysWithMinResources >= executionDays;
     };
 
@@ -1032,6 +1030,7 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
     // Build response
     const response: any = {
       success: true,
+      timezone: timeZone,
       blockedDates: blockedDatesArray,
       blockedRanges: allBlockedRanges,
       blockedCategories,
@@ -1276,6 +1275,7 @@ export const getProjectScheduleWindow = async (req: Request, res: Response) => {
         scheduledBufferUnit: window.scheduledBufferUnit,
         scheduledStartTime: window.scheduledStartTime,
         scheduledEndTime: window.scheduledEndTime,
+        throughputDays: window.throughputDays,
       },
     };
     console.log('[SCHEDULE WINDOW API] Success response:', response);

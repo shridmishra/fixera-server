@@ -78,7 +78,8 @@ export const getEmployeeAvailability = async (req: Request, res: Response) => {
             }) || [];
 
             // Get booking-blocked ranges (when employee is assigned to active bookings)
-            const allBookingBlockedRanges = await buildBookingBlockedRanges(member._id);
+            const memberId = String(member._id);
+            const allBookingBlockedRanges = await buildBookingBlockedRanges(memberId);
             const bookingBlockedRangesInRange = allBookingBlockedRanges.filter(range => {
                 const rangeStart = new Date(range.startDate);
                 const rangeEnd = new Date(range.endDate);
