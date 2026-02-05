@@ -412,6 +412,13 @@ export const updateEmployeeEmail = async (req: Request, res: Response, next: Nex
         const { employeeId } = req.params;
         const { email } = req.body;
 
+        if (!mongoose.Types.ObjectId.isValid(employeeId)) {
+            return res.status(400).json({
+                success: false,
+                msg: "Invalid employeeId"
+            });
+        }
+
         if (!email || typeof email !== 'string') {
             return res.status(400).json({
                 success: false,
