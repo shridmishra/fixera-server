@@ -528,9 +528,26 @@ export const updatePhoneNumber = async (req: Request, res: Response, next: NextF
       });
     }
 
-    // Basic phone validation
-    if (phone.length < 10 || phone.length > 15) {
-      return res.status(400).json({
+    // Normalize and validate phone using google-libphonenumber
+    const PNF = require('google-libphonenumber').PhoneNumberFormat;
+    const phoneUtil = require('google-libphonenumber').PhoneNumberUtil.getInstance();
+    
+    let normalizedPhone: string;
+    try {
+      // Parse number with default region 'US' (or change to appropriate default) if not in international format
+      // If the input starts with +, it will form an international number
+      const number = phoneUtil.parseAndKeepRawInput(String(phone));
+      
+      if (!phoneUtil.isValidNumber(number)) {
+        return res.status(400).json({
+          success: false,
+          msg: "Invalid phone number format"
+        });
+      }
+      
+      normalizedPhone = phoneUtil.format(number, PNF.E164);
+    } catch (error) {
+       return res.status(400).json({
         success: false,
         msg: "Invalid phone number format"
       });
@@ -538,8 +555,8 @@ export const updatePhoneNumber = async (req: Request, res: Response, next: NextF
 
     await connecToDatabase();
     
-    // Check if phone is already in use
-    const existingUser = await User.findOne({ phone });
+    // Check if phone is already in use by another user
+    const existingUser = await User.findOne({ phone: normalizedPhone });
     if (existingUser && existingUser._id.toString() !== decoded.id) {
        return res.status(400).json({
         success: false,
@@ -556,13 +573,28 @@ export const updatePhoneNumber = async (req: Request, res: Response, next: NextF
       });
     }
 
-    // Update phone and reset verification status
-    user.phone = phone;
-    user.isPhoneVerified = false;
-    
-    await user.save();
-
-    console.log(`📱 Phone: Updated phone number for ${user.email}`);
+    // Only update if phone number has changed
+    if (user.phone !== normalizedPhone) {
+      user.phone = normalizedPhone;
+      user.isPhoneVerified = false;
+      
+      try {
+        await user.save();
+      } catch (error: any) {
+        // Handle concurrent duplicate key error
+        if (error.code === 11000 || error.name === 'MongoServerError' && error.message.includes('duplicate key')) {
+           return res.status(400).json({
+            success: false,
+            msg: "Phone number is already in use by another account"
+          });
+        }
+        throw error;
+      }
+      
+      console.log(`📱 Phone: Updated phone number for ${user.email} -> ${normalizedPhone}`);
+    } else {
+      console.log(`📱 Phone: No change in phone number for ${user.email}`);
+    }
 
     // Return updated user data
     const userResponse = {
