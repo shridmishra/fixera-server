@@ -4,6 +4,9 @@ import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
 import { upload, uploadToS3, deleteFromS3, generateFileName, validateFile } from "../../utils/s3Upload";
 import mongoose from 'mongoose';
+import { PhoneNumberUtil, PhoneNumberFormat } from 'google-libphonenumber';
+
+const phoneUtil = PhoneNumberUtil.getInstance();
 
 // Upload ID proof
 export const uploadIdProof = async (req: Request, res: Response, next: NextFunction) => {
@@ -529,14 +532,12 @@ export const updatePhoneNumber = async (req: Request, res: Response, next: NextF
     }
 
     // Normalize and validate phone using google-libphonenumber
-    const PNF = require('google-libphonenumber').PhoneNumberFormat;
-    const phoneUtil = require('google-libphonenumber').PhoneNumberUtil.getInstance();
     
     let normalizedPhone: string;
     try {
       // Parse number with default region 'US' (or change to appropriate default) if not in international format
       // If the input starts with +, it will form an international number
-      const number = phoneUtil.parseAndKeepRawInput(String(phone));
+      const number = phoneUtil.parseAndKeepRawInput(String(phone), 'US');
       
       if (!phoneUtil.isValidNumber(number)) {
         return res.status(400).json({
@@ -545,7 +546,7 @@ export const updatePhoneNumber = async (req: Request, res: Response, next: NextF
         });
       }
       
-      normalizedPhone = phoneUtil.format(number, PNF.E164);
+      normalizedPhone = phoneUtil.format(number, PhoneNumberFormat.E164);
     } catch (error) {
        return res.status(400).json({
         success: false,
@@ -582,7 +583,7 @@ export const updatePhoneNumber = async (req: Request, res: Response, next: NextF
         await user.save();
       } catch (error: any) {
         // Handle concurrent duplicate key error
-        if (error.code === 11000 || error.name === 'MongoServerError' && error.message.includes('duplicate key')) {
+        if (error.code === 11000) {
            return res.status(400).json({
             success: false,
             msg: "Phone number is already in use by another account"

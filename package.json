@@ -43,6 +43,7 @@
     "@types/cookie-parser": "^1.4.9",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
+    "@types/google-libphonenumber": "^7.4.30",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/luxon": "^3.4.2",
     "@types/multer": "^2.0.0",
