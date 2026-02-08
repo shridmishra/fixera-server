@@ -658,7 +658,7 @@ export const updateCustomerProfile = async (req: Request, res: Response, next: N
     const trimmedCity = typeof city === 'string' ? city.trim() : undefined;
     const trimmedCountry = typeof country === 'string' ? country.trim() : undefined;
     const trimmedPostalCode = typeof postalCode === 'string' ? postalCode.trim() : undefined;
-    const trimmedBusinessName = typeof businessName === 'string' ? businessName.trim() : businessName;
+    const trimmedBusinessName = typeof businessName === 'string' ? businessName.trim() : undefined;
 
     await connecToDatabase();
     const user = await User.findById(decoded.id);
@@ -754,6 +754,7 @@ export const updateIdInfo = async (req: Request, res: Response, next: NextFuncti
     }
 
     const { idCountryOfIssue, idExpirationDate } = req.body;
+    const normalizedIdCountryOfIssue = typeof idCountryOfIssue === 'string' ? idCountryOfIssue.trim() : idCountryOfIssue;
 
     await connecToDatabase();
     const user = await User.findById(decoded.id);
@@ -775,11 +776,11 @@ export const updateIdInfo = async (req: Request, res: Response, next: NextFuncti
     // Track changes for admin review
     const changes: { field: string; oldValue: string; newValue: string }[] = [];
 
-    if (idCountryOfIssue !== undefined && idCountryOfIssue !== (user.idCountryOfIssue || '')) {
+    if (normalizedIdCountryOfIssue !== undefined && normalizedIdCountryOfIssue !== (user.idCountryOfIssue || '')) {
       changes.push({
         field: 'idCountryOfIssue',
         oldValue: user.idCountryOfIssue || '',
-        newValue: idCountryOfIssue
+        newValue: normalizedIdCountryOfIssue
       });
     }
 
@@ -812,7 +813,7 @@ export const updateIdInfo = async (req: Request, res: Response, next: NextFuncti
     }
 
     // Apply changes
-    if (idCountryOfIssue !== undefined) user.idCountryOfIssue = idCountryOfIssue;
+    if (normalizedIdCountryOfIssue !== undefined) user.idCountryOfIssue = normalizedIdCountryOfIssue;
     if (idExpirationDate !== undefined && parsedExpirationDate) {
       user.idExpirationDate = parsedExpirationDate;
     }

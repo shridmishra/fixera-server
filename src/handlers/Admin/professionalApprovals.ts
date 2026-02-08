@@ -2,8 +2,8 @@ import { Request, Response, NextFunction } from "express";
 import User, { IUser } from "../../models/user";
 import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
-import { sendProfessionalApprovalEmail, sendProfessionalRejectionEmail, sendProfessionalSuspensionEmail, sendProfessionalReactivationEmail } from "../../utils/emailService";
-import { deleteFromS3, getPresignedUrl, parseS3KeyFromUrl } from "../../utils/s3Upload";
+import { sendProfessionalApprovalEmail, sendProfessionalIdChangeRejectionEmail, sendProfessionalRejectionEmail, sendProfessionalSuspensionEmail, sendProfessionalReactivationEmail } from "../../utils/emailService";
+import { deleteFromS3, parseS3KeyFromUrl } from "../../utils/s3Upload";
 import mongoose from 'mongoose';
 
 declare global {
@@ -19,6 +19,12 @@ const getS3KeyFromValue = (value?: string): string | null => {
   if (value.startsWith('id-proof/')) return value;
   if (value.startsWith('http')) return parseS3KeyFromUrl(value);
   return null;
+};
+
+const buildS3UrlFromKey = (key: string): string => {
+  const bucket = process.env.S3_BUCKET_NAME || 'fixera-uploads';
+  const region = process.env.AWS_REGION || 'us-east-1';
+  return `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
 };
 
 export const requireAdmin = async (req: Request, res: Response, next: NextFunction) => {
@@ -582,12 +588,7 @@ export const reviewIdChanges = async (req: Request, res: Response, next: NextFun
             const oldKey = getS3KeyFromValue(oldValue);
             if (oldKey) {
               professional.idProofFileName = oldKey;
-              try {
-                professional.idProofUrl = await getPresignedUrl(oldKey, 7 * 24 * 60 * 60);
-              } catch (presignError) {
-                console.warn(`⚠️ ID Proof: Failed to presign restored upload ${oldKey}:`, presignError);
-                professional.idProofUrl = undefined;
-              }
+              professional.idProofUrl = buildS3UrlFromKey(oldKey);
             } else {
               professional.idProofUrl = undefined;
               professional.idProofFileName = undefined;
@@ -618,7 +619,7 @@ export const reviewIdChanges = async (req: Request, res: Response, next: NextFun
 
       // Send rejection email
       try {
-        await sendProfessionalRejectionEmail(professional.email, professional.name, reason.trim());
+        await sendProfessionalIdChangeRejectionEmail(professional.email, professional.name, reason.trim());
       } catch (emailError) {
         console.error(`Failed to send ID change rejection email to ${professional.email}:`, emailError);
       }
