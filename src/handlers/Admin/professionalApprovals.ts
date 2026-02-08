@@ -2,17 +2,9 @@ import { Request, Response, NextFunction } from "express";
 import User, { IUser } from "../../models/user";
 import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
-import { sendProfessionalApprovalEmail, sendProfessionalIdChangeRejectionEmail, sendProfessionalRejectionEmail, sendProfessionalSuspensionEmail, sendProfessionalReactivationEmail } from "../../utils/emailService";
+import { sendProfessionalApprovalEmail, sendProfessionalIdChangeApprovalEmail, sendProfessionalIdChangeRejectionEmail, sendProfessionalRejectionEmail, sendProfessionalSuspensionEmail, sendProfessionalReactivationEmail } from "../../utils/emailService";
 import { deleteFromS3, parseS3KeyFromUrl } from "../../utils/s3Upload";
 import mongoose from 'mongoose';
-
-declare global {
-  namespace Express {
-    interface Request {
-      admin?: IUser;
-    }
-  }
-}
 
 const getS3KeyFromValue = (value?: string): string | null => {
   if (!value) return null;
@@ -549,11 +541,11 @@ export const reviewIdChanges = async (req: Request, res: Response, next: NextFun
       professional.rejectionReason = undefined;
       await professional.save();
 
-      // Send approval email
+      // Send ID change approval email (distinct from initial profile approval)
       try {
-        await sendProfessionalApprovalEmail(professional.email, professional.name);
+        await sendProfessionalIdChangeApprovalEmail(professional.email, professional.name);
       } catch (emailError) {
-        console.error(`📧 PHASE 1: Failed to send approval email to professionalId=${professional._id.toString()}:`, emailError);
+        console.error(`📧 PHASE 1: Failed to send ID change approval email to professionalId=${professional._id.toString()}:`, emailError);
       }
 
       console.log(`✅ Admin: ID changes approved for professionalId=${professional._id.toString()} by adminId=${adminUser._id.toString()}`);

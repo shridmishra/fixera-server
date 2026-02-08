@@ -5,7 +5,7 @@ import emailVerificationRoutes from "./verify/email";
 import { protect } from "../../middlewares/auth";
 import { GetCurrentUser } from "../../handlers";
 import { validateVAT, updateUserVAT, validateAndPopulateVAT } from "../../handlers/User/validateVat";
-import { requireAuth, uploadIdProof, updateProfessionalProfile, submitForVerification, updatePhone, updateCustomerProfile, updateIdInfo } from "../../handlers/User/profileManagement";
+import { uploadIdProof, updateProfessionalProfile, submitForVerification, updatePhone, updateCustomerProfile, updateIdInfo } from "../../handlers/User/profileManagement";
 import { upload } from "../../utils/s3Upload";
 import { getLoyaltyStatus, addSpending, getLeaderboard } from "../../handlers/User/loyaltyManagement";
 import { inviteEmployee, getEmployees, updateEmployeeStatus, acceptInvitation, updateEmployeeEmail, removeEmployee } from "../../handlers/User/employeeManagement";
@@ -50,12 +50,12 @@ userRouter.use("/verify-email", emailVerificationRoutes);
 userRouter.route("/vat/validate").post(validateVAT)
 userRouter.route("/vat").put(updateUserVAT)
 userRouter.route("/vat/validate-and-populate").post(validateAndPopulateVAT) 
-userRouter.route("/id-proof").post(requireAuth, upload.single('idProof'), uploadIdProof)
-userRouter.route("/professional-profile").put(requireAuth, updateProfessionalProfile)
-userRouter.route("/submit-for-verification").post(requireAuth, submitForVerification)
-userRouter.route("/phone").put(requireAuth, updatePhone)
-userRouter.route("/customer-profile").put(requireAuth, updateCustomerProfile)
-userRouter.route("/id-info").put(requireAuth, updateIdInfo)
+userRouter.route("/id-proof").post(upload.single('idProof'), uploadIdProof)
+userRouter.route("/professional-profile").put(updateProfessionalProfile)
+userRouter.route("/submit-for-verification").post(submitForVerification)
+userRouter.route("/phone").put(updatePhone)
+userRouter.route("/customer-profile").put(updateCustomerProfile)
+userRouter.route("/id-info").put(updateIdInfo)
 userRouter.route("/loyalty/status").get(getLoyaltyStatus)
 userRouter.route("/loyalty/add-spending").post(addSpending)
 userRouter.route("/loyalty/leaderboard").get(getLeaderboard)

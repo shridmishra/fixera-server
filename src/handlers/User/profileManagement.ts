@@ -674,14 +674,14 @@ export const updateCustomerProfile = async (req: Request, res: Response, next: N
     }
 
     // Business name only for business customers
-    if (businessName !== undefined) {
+    if (trimmedBusinessName !== undefined) {
       if (user.customerType !== 'business') {
         return res.status(400).json({
           success: false,
           msg: "Business name can only be set for business customers"
         });
       }
-      user.businessName = trimmedBusinessName ? trimmedBusinessName : undefined;
+      user.businessName = trimmedBusinessName.length > 0 ? trimmedBusinessName : undefined;
     }
 
     await user.save();
@@ -793,9 +793,9 @@ export const updateIdInfo = async (req: Request, res: Response, next: NextFuncti
     const shouldSetPending = user.professionalStatus === 'approved' || user.professionalStatus === 'pending';
     if (shouldSetPending) {
       user.professionalStatus = 'pending';
+      user.isIdVerified = false;
+      user.rejectionReason = undefined;
     }
-    user.isIdVerified = false;
-    user.rejectionReason = undefined;
 
     await user.save();
 
