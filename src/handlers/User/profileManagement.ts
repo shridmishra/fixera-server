@@ -5,9 +5,12 @@ import jwt from 'jsonwebtoken';
 import { upload, uploadToS3, deleteFromS3, generateFileName, validateFile } from "../../utils/s3Upload";
 import mongoose from 'mongoose';
 
-// Upload ID proof
-export const uploadIdProof = async (req: Request, res: Response, next: NextFunction) => {
+export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
   try {
+    if (req.user?.id) {
+      return next();
+    }
+
     const token = req.cookies?.['auth-token'];
 
     if (!token) {
@@ -27,8 +30,29 @@ export const uploadIdProof = async (req: Request, res: Response, next: NextFunct
       });
     }
 
+    (req as any).user = { id: decoded.id };
+    return next();
+  } catch (error: any) {
+    console.error('Require auth error:', error);
+    return res.status(500).json({
+      success: false,
+      msg: "Failed to authenticate user"
+    });
+  }
+};
+
+// Upload ID proof
+export const uploadIdProof = async (req: Request, res: Response, next: NextFunction) => {
+  try {
     await connecToDatabase();
-    const user = await User.findById(decoded.id);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        msg: "Authentication required"
+      });
+    }
+    const user = await User.findById(userId);
 
     if (!user) {
       return res.status(404).json({
@@ -149,25 +173,6 @@ export const uploadIdProof = async (req: Request, res: Response, next: NextFunct
 // Update professional profile
 export const updateProfessionalProfile = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const token = req.cookies?.['auth-token'];
-
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        msg: "Authentication required"
-      });
-    }
-
-    let decoded: { id: string } | null = null;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
-    } catch (err) {
-      return res.status(401).json({
-        success: false,
-        msg: "Invalid authentication token"
-      });
-    }
-
     const {
       businessInfo,
       hourlyRate,
@@ -181,7 +186,14 @@ export const updateProfessionalProfile = async (req: Request, res: Response, nex
     } = req.body;
 
     await connecToDatabase();
-    const user = await User.findById(decoded.id);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        msg: "Authentication required"
+      });
+    }
+    const user = await User.findById(userId);
 
     if (!user) {
       return res.status(404).json({
@@ -410,27 +422,15 @@ export const updateProfessionalProfile = async (req: Request, res: Response, nex
 // Send profile for verification - PHASE 3 implementation
 export const submitForVerification = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const token = req.cookies?.['auth-token'];
-
-    if (!token) {
+    await connecToDatabase();
+    const userId = req.user?.id;
+    if (!userId) {
       return res.status(401).json({
         success: false,
         msg: "Authentication required"
       });
     }
-
-    let decoded: { id: string } | null = null;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
-    } catch (err) {
-      return res.status(401).json({
-        success: false,
-        msg: "Invalid authentication token"
-      });
-    }
-
-    await connecToDatabase();
-    const user = await User.findById(decoded.id);
+    const user = await User.findById(userId);
 
     if (!user) {
       return res.status(404).json({
@@ -518,25 +518,6 @@ export const submitForVerification = async (req: Request, res: Response, next: N
 // Update phone number
 export const updatePhone = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const token = req.cookies?.['auth-token'];
-
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        msg: "Authentication required"
-      });
-    }
-
-    let decoded: { id: string } | null = null;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
-    } catch (err) {
-      return res.status(401).json({
-        success: false,
-        msg: "Invalid authentication token"
-      });
-    }
-
     const { phone } = req.body;
 
     if (!phone || typeof phone !== 'string') {
@@ -557,7 +538,14 @@ export const updatePhone = async (req: Request, res: Response, next: NextFunctio
     }
 
     await connecToDatabase();
-    const user = await User.findById(decoded.id);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        msg: "Authentication required"
+      });
+    }
+    const user = await User.findById(userId);
 
     if (!user) {
       return res.status(404).json({
@@ -634,25 +622,6 @@ export const updatePhone = async (req: Request, res: Response, next: NextFunctio
 // Update customer profile (address, business name for business customers)
 export const updateCustomerProfile = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const token = req.cookies?.['auth-token'];
-
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        msg: "Authentication required"
-      });
-    }
-
-    let decoded: { id: string } | null = null;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
-    } catch (err) {
-      return res.status(401).json({
-        success: false,
-        msg: "Invalid authentication token"
-      });
-    }
-
     const { address, city, country, postalCode, businessName } = req.body;
     const trimmedAddress = typeof address === 'string' ? address.trim() : undefined;
     const trimmedCity = typeof city === 'string' ? city.trim() : undefined;
@@ -661,7 +630,14 @@ export const updateCustomerProfile = async (req: Request, res: Response, next: N
     const trimmedBusinessName = typeof businessName === 'string' ? businessName.trim() : undefined;
 
     await connecToDatabase();
-    const user = await User.findById(decoded.id);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        msg: "Authentication required"
+      });
+    }
+    const user = await User.findById(userId);
 
     if (!user) {
       return res.status(404).json({
@@ -734,30 +710,18 @@ export const updateCustomerProfile = async (req: Request, res: Response, next: N
 // Update ID information (triggers re-verification for professionals)
 export const updateIdInfo = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const token = req.cookies?.['auth-token'];
+    const { idCountryOfIssue, idExpirationDate } = req.body;
+    const normalizedIdCountryOfIssue = typeof idCountryOfIssue === 'string' ? idCountryOfIssue.trim() : undefined;
 
-    if (!token) {
+    await connecToDatabase();
+    const userId = req.user?.id;
+    if (!userId) {
       return res.status(401).json({
         success: false,
         msg: "Authentication required"
       });
     }
-
-    let decoded: { id: string } | null = null;
-    try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
-    } catch (err) {
-      return res.status(401).json({
-        success: false,
-        msg: "Invalid authentication token"
-      });
-    }
-
-    const { idCountryOfIssue, idExpirationDate } = req.body;
-    const normalizedIdCountryOfIssue = typeof idCountryOfIssue === 'string' ? idCountryOfIssue.trim() : idCountryOfIssue;
-
-    await connecToDatabase();
-    const user = await User.findById(decoded.id);
+    const user = await User.findById(userId);
 
     if (!user) {
       return res.status(404).json({

@@ -553,10 +553,10 @@ export const reviewIdChanges = async (req: Request, res: Response, next: NextFun
       try {
         await sendProfessionalApprovalEmail(professional.email, professional.name);
       } catch (emailError) {
-        console.error(`📧 PHASE 1: Failed to send approval email to ${professional.email}:`, emailError);
+        console.error(`📧 PHASE 1: Failed to send approval email to professionalId=${professional._id.toString()}:`, emailError);
       }
 
-      console.log(`✅ Admin: ID changes approved for ${professional.email} by ${adminUser.email}`);
+      console.log(`✅ Admin: ID changes approved for professionalId=${professional._id.toString()} by adminId=${adminUser._id.toString()}`);
 
       return res.status(200).json({
         success: true,
@@ -621,10 +621,10 @@ export const reviewIdChanges = async (req: Request, res: Response, next: NextFun
       try {
         await sendProfessionalIdChangeRejectionEmail(professional.email, professional.name, reason.trim());
       } catch (emailError) {
-        console.error(`Failed to send ID change rejection email to ${professional.email}:`, emailError);
+        console.error(`Failed to send ID change rejection email to professionalId=${professional._id.toString()}:`, emailError);
       }
 
-      console.log(`❌ Admin: ID changes rejected for ${professional.email} by ${adminUser.email}`);
+      console.log(`❌ Admin: ID changes rejected for professionalId=${professional._id.toString()} by adminId=${adminUser._id.toString()}`);
 
       return res.status(200).json({
         success: true,
