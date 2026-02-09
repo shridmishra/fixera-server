@@ -1064,7 +1064,7 @@ export const getProjectScheduleProposals = async (req: Request, res: Response) =
     }
     const subprojectIndex = subprojectIndexResult.index;
 
-    const proposals = await buildProjectScheduleProposals(id, subprojectIndex);
+    const proposals = await buildProjectScheduleProposals(id as string, subprojectIndex);
 
     if (!proposals) {
       return res.status(404).json({
@@ -1141,9 +1141,9 @@ export const getProjectScheduleWindow = async (req: Request, res: Response) => {
     const subprojectIndex = subprojectIndexResult.index;
 
     const window = await buildProjectScheduleWindow({
-      projectId: id,
+      projectId: id as string,
       subprojectIndex,
-      startDate,
+      startDate: startDate as string,
       startTime: typeof startTime === "string" ? startTime : undefined,
     });
 
