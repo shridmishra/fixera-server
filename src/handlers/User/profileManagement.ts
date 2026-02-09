@@ -4,6 +4,19 @@ import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
 import { upload, uploadToS3, deleteFromS3, generateFileName, validateFile } from "../../utils/s3Upload";
 import mongoose from 'mongoose';
+import { PhoneNumberUtil, PhoneNumberFormat } from 'google-libphonenumber';
+
+const phoneUtil = PhoneNumberUtil.getInstance();
+
+const maskEmail = (email: string): string => {
+  if (!email) return 'Unknown';
+  const [local, domain] = email.split('@');
+  if (!local || !domain) return email;
+  const maskedLocal = local.length > 2 
+    ? local.substring(0, 2) + '*'.repeat(local.length - 2) 
+    : local + '*';
+  return `${maskedLocal}@${domain}`;
+};
 
 // Upload ID proof
 export const uploadIdProof = async (req: Request, res: Response, next: NextFunction) => {
@@ -519,8 +532,8 @@ export const updatePhoneNumber = async (req: Request, res: Response, next: NextF
       });
     }
 
-    const { phone: rawPhone } = req.body;
-    const phone = typeof rawPhone === "string" ? rawPhone.trim() : "";
+    const rawPhone = req.body.phone;
+    const phone = typeof rawPhone === 'string' ? rawPhone.trim() : String(rawPhone || '').trim();
 
     if (!phone) {
       return res.status(400).json({
@@ -529,9 +542,41 @@ export const updatePhoneNumber = async (req: Request, res: Response, next: NextF
       });
     }
 
-    // Basic phone validation (E.164-ish)
-    if (!/^\+?\d{10,15}$/.test(phone)) {
+    // Validate format: check for letters and digit count
+    if (/[a-zA-Z]/.test(phone)) {
       return res.status(400).json({
+        success: false,
+        msg: "Invalid phone number format"
+      });
+    }
+
+     // Allow optional leading '+', then 10–15 digits
+    const digitCount = phone.replace(/\D/g, '').length;
+    if (digitCount < 10 || digitCount > 15) {
+       return res.status(400).json({
+        success: false,
+        msg: "Invalid phone number format"
+      });
+    }
+
+    // Normalize and validate phone using google-libphonenumber
+    
+    let normalizedPhone: string;
+    try {
+      // Parse number with default region 'US' (or change to appropriate default) if not in international format
+      // If the input starts with +, it will form an international number
+      const number = phoneUtil.parseAndKeepRawInput(String(phone), 'US');
+      
+      if (!phoneUtil.isValidNumber(number)) {
+        return res.status(400).json({
+          success: false,
+          msg: "Invalid phone number format"
+        });
+      }
+      
+      normalizedPhone = phoneUtil.format(number, PhoneNumberFormat.E164);
+    } catch (error) {
+       return res.status(400).json({
         success: false,
         msg: "Invalid phone number format"
       });
@@ -539,8 +584,8 @@ export const updatePhoneNumber = async (req: Request, res: Response, next: NextF
 
     await connecToDatabase();
     
-    // Check if phone is already in use
-    const existingUser = await User.findOne({ phone });
+    // Check if phone is already in use by another user
+    const existingUser = await User.findOne({ phone: normalizedPhone });
     if (existingUser && existingUser._id.toString() !== decoded.id) {
        return res.status(400).json({
         success: false,
@@ -557,13 +602,30 @@ export const updatePhoneNumber = async (req: Request, res: Response, next: NextF
       });
     }
 
-    // Update phone and reset verification status
-    user.phone = phone;
-    user.isPhoneVerified = false;
-    
-    await user.save();
-
-    console.log(`📱 Phone: Updated phone number for ${user.email}`);
+    let phoneChanged = false;
+    // Only update if phone number has changed
+    if (user.phone !== normalizedPhone) {
+      phoneChanged = true;
+      user.phone = normalizedPhone;
+      user.isPhoneVerified = false;
+      
+      try {
+        await user.save();
+      } catch (error: any) {
+        // Handle concurrent duplicate key error
+        if (error.code === 11000) {
+           return res.status(409).json({
+            success: false,
+            msg: "Phone number already in use"
+          });
+        }
+        throw error;
+      }
+      
+      console.log(`📱 Phone: Updated phone number for ${maskEmail(user.email)}`);
+    } else {
+      console.log(`📱 Phone: No change in phone number for ${maskEmail(user.email)}`);
+    }
 
     // Return updated user data
     const userResponse = {
@@ -596,7 +658,9 @@ export const updatePhoneNumber = async (req: Request, res: Response, next: NextF
 
     return res.status(200).json({
       success: true,
-      msg: "Phone number updated successfully. Please verify your new number.",
+      msg: phoneChanged
+        ? "Phone number updated successfully. Please verify your new number."
+        : "No changes to phone number",
       user: userResponse
     });
 
