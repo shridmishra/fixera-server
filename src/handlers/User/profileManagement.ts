@@ -99,13 +99,20 @@ export const uploadIdProof = async (req: Request, res: Response, next: NextFunct
     }
 
     console.log(`📄 ID Proof: Processing upload for user ${user.email}`);
-    
-    // Delete existing file if any
-    if (user.idProofUrl && user.idProofFileName) {
+
+    // Track if this is a re-upload for an already-approved professional
+    const wasApproved = user.professionalStatus === 'approved';
+    const hadPreviousId = !!user.idProofUrl;
+    const previousIdProofUrl = user.idProofUrl;
+    const previousIdProofFileName = user.idProofFileName;
+
+    // Only delete existing S3 file immediately if this is NOT an approved
+    // professional re-uploading. For approved professionals the old file is
+    // kept so that a rejection can restore it; cleanup happens on approve.
+    if (user.idProofUrl && user.idProofFileName && !(wasApproved && hadPreviousId)) {
       try {
-        // Extract key from URL or use filename
-        const existingKey = user.idProofFileName.startsWith('id-proof/') 
-          ? user.idProofFileName 
+        const existingKey = user.idProofFileName.startsWith('id-proof/')
+          ? user.idProofFileName
           : `id-proof/${user._id}/${user.idProofFileName}`;
         await deleteFromS3(existingKey);
         console.log(`🗑️ ID Proof: Deleted existing file for ${user.email}`);
@@ -119,12 +126,6 @@ export const uploadIdProof = async (req: Request, res: Response, next: NextFunct
 
     // Upload to S3
     const uploadResult = await uploadToS3(req.file, fileName);
-
-    // Track if this is a re-upload for an already-approved professional
-    const wasApproved = user.professionalStatus === 'approved';
-    const hadPreviousId = !!user.idProofUrl;
-    const previousIdProofUrl = user.idProofUrl;
-    const previousIdProofFileName = user.idProofFileName;
 
     // Update user record
     user.idProofUrl = uploadResult.url;
