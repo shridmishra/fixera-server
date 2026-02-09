@@ -364,7 +364,7 @@ export const getBookingById = async (req: Request, res: Response, next: NextFunc
     const userIdString = userId ? userId.toString() : '';
     const { bookingId } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+    if (!mongoose.Types.ObjectId.isValid(bookingId as string)) {
       return res.status(400).json({
         success: false,
         msg: "Invalid booking ID"
@@ -419,7 +419,7 @@ export const submitPostBookingAnswers = async (
       answers?: Array<{ questionId?: string; question?: string; answer?: string }>;
     };
 
-    if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+    if (!mongoose.Types.ObjectId.isValid(bookingId as string)) {
       return res.status(400).json({
         success: false,
         msg: "Invalid booking ID",
@@ -549,7 +549,7 @@ export const submitQuote = async (req: Request, res: Response, next: NextFunctio
     }
 
     // Check if user is the professional for this booking
-    if (booking.professional?.toString() !== userId) {
+    if (booking.professional?.toString() !== userId?.toString()) {
       return res.status(403).json({
         success: false,
         msg: "Only the assigned professional can submit a quote"
@@ -574,7 +574,7 @@ export const submitQuote = async (req: Request, res: Response, next: NextFunctio
       termsAndConditions,
       estimatedDuration,
       submittedAt: new Date(),
-      submittedBy: new mongoose.Types.ObjectId(userId as string)
+      submittedBy: new mongoose.Types.ObjectId(userId as any)
     };
 
     await (booking as any).updateStatus('quoted', userId, 'Quote submitted by professional');
@@ -619,7 +619,7 @@ export const respondToQuote = async (req: Request, res: Response, next: NextFunc
     }
 
     // Check if user is the customer
-    if (booking.customer.toString() !== userId) {
+    if (booking.customer.toString() !== userId?.toString()) {
       return res.status(403).json({
         success: false,
         msg: "Only the customer can respond to quotes"
@@ -679,8 +679,8 @@ export const updateBookingStatus = async (req: Request, res: Response, next: Nex
     }
 
     // Check authorization
-    const isCustomer = booking.customer.toString() === userId;
-    const isProfessional = booking.professional?.toString() === userId;
+    const isCustomer = booking.customer.toString() === userId?.toString();
+    const isProfessional = booking.professional?.toString() === userId?.toString();
 
     if (!isCustomer && !isProfessional) {
       return res.status(403).json({
@@ -731,8 +731,8 @@ export const cancelBooking = async (req: Request, res: Response, next: NextFunct
     }
 
     // Check authorization
-    const isCustomer = booking.customer.toString() === userId;
-    const isProfessional = booking.professional?.toString() === userId;
+    const isCustomer = booking.customer.toString() === userId?.toString();
+    const isProfessional = booking.professional?.toString() === userId?.toString();
 
     if (!isCustomer && !isProfessional) {
       return res.status(403).json({
@@ -750,7 +750,7 @@ export const cancelBooking = async (req: Request, res: Response, next: NextFunct
     }
 
     booking.cancellation = {
-      cancelledBy: new mongoose.Types.ObjectId(userId as string),
+      cancelledBy: new mongoose.Types.ObjectId(userId?.toString()),
       reason,
       cancelledAt: new Date()
     };
