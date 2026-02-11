@@ -584,7 +584,11 @@ export const updatePhone = async (req: Request, res: Response, next: NextFunctio
         // Local format with known region
         number = phoneUtil.parseAndKeepRawInput(phone, defaultRegion);
       } else {
-        // No region, try prepending '+' as fallback
+        // Fallback: `defaultRegion` is undefined and `phone` doesn't start with '+'.
+        // Auto-prefix '+' so phoneUtil.parseAndKeepRawInput can attempt E.164 parsing.
+        // This means digit-only input like "12125551234" becomes "+12125551234" and may
+        // resolve to a valid PhoneNumberFormat.E164 number — convenient for users who
+        // omit the '+', but could also silently accept unintended country-code combos.
         number = phoneUtil.parseAndKeepRawInput('+' + phone, '');
       }
 
