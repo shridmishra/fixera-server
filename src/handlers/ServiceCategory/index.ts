@@ -18,7 +18,7 @@ export const getActiveServiceCategories = async (
       isActive: true,
       activeCountries: country,
     })
-      .select("category service areaOfWork pricingModel certificationRequired")
+      .select("category service areaOfWork pricingModel certificationRequired icon")
       .sort({ category: 1, service: 1 });
 
     // Group by category
@@ -52,12 +52,29 @@ export const getActiveServiceCategories = async (
           countries: [country],
           pricingModel: config.pricingModel,
           certificationRequired: config.certificationRequired,
+          icon: config.icon,
         });
       }
     });
 
-    // Convert map to array
-    const categories = Array.from(categoriesMap.values());
+    // Convert map to array and sort by preferred display order
+    const categoryOrder = [
+      'Small tasks',
+      'Interior',
+      'Exterior',
+      'Outdoor work',
+      'Renovation',
+      'Inspections',
+    ];
+
+    const categories = Array.from(categoriesMap.values()).sort((a, b) => {
+      const indexA = categoryOrder.indexOf(a.name);
+      const indexB = categoryOrder.indexOf(b.name);
+      // Unknown categories go to the end
+      const orderA = indexA === -1 ? categoryOrder.length : indexA;
+      const orderB = indexB === -1 ? categoryOrder.length : indexB;
+      return orderA - orderB;
+    });
 
     res.json(categories);
   } catch (error) {

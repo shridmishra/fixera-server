@@ -532,6 +532,21 @@ export const reviewIdChanges = async (req: Request, res: Response, next: NextFun
     }
 
     if (action === 'approve') {
+      // Delete old S3 files that are being replaced before clearing pending changes
+      for (const change of professional.pendingIdChanges) {
+        if (change.field === 'idProofDocument' && change.oldValue) {
+          const oldKey = getS3KeyFromValue(change.oldValue);
+          if (oldKey) {
+            try {
+              await deleteFromS3(oldKey);
+              console.log(`🗑️ ID Proof: Deleted old file ${oldKey} after approval for professionalId=${String(professional._id)}`);
+            } catch (deleteError) {
+              console.error(`⚠️ ID Proof: Failed to delete old file ${oldKey} after approval for professionalId=${String(professional._id)}:`, deleteError);
+            }
+          }
+        }
+      }
+
       // Clear pending changes, re-approve professional
       professional.pendingIdChanges = undefined;
       professional.professionalStatus = 'approved';

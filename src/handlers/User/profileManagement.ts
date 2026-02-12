@@ -4,6 +4,19 @@ import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
 import { upload, uploadToS3, deleteFromS3, generateFileName, validateFile } from "../../utils/s3Upload";
 import mongoose from 'mongoose';
+import { PhoneNumberUtil, PhoneNumberFormat } from 'google-libphonenumber';
+import { getCountryCode } from '../../utils/geocoding';
+
+const phoneUtil = PhoneNumberUtil.getInstance();
+const maskEmail = (email: string): string => {
+  if (!email) return 'Unknown';
+  const [local, domain] = email.split('@');
+  if (!local || !domain) return email;
+  const maskedLocal = local.length > 2 
+    ? local.substring(0, 2) + '*'.repeat(local.length - 2) 
+    : local + '*';
+  return `${maskedLocal}@${domain}`;
+};
 
 export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -87,13 +100,20 @@ export const uploadIdProof = async (req: Request, res: Response, next: NextFunct
     }
 
     console.log(`📄 ID Proof: Processing upload for user ${user.email}`);
-    
-    // Delete existing file if any
-    if (user.idProofUrl && user.idProofFileName) {
+
+    // Track if this is a re-upload for an already-approved professional
+    const wasApproved = user.professionalStatus === 'approved';
+    const hadPreviousId = !!user.idProofUrl;
+    const previousIdProofUrl = user.idProofUrl;
+    const previousIdProofFileName = user.idProofFileName;
+
+    // Only delete existing S3 file immediately if this is NOT an approved
+    // professional re-uploading. For approved professionals the old file is
+    // kept so that a rejection can restore it; cleanup happens on approve.
+    if (user.idProofUrl && user.idProofFileName && !(wasApproved && hadPreviousId)) {
       try {
-        // Extract key from URL or use filename
-        const existingKey = user.idProofFileName.startsWith('id-proof/') 
-          ? user.idProofFileName 
+        const existingKey = user.idProofFileName.startsWith('id-proof/')
+          ? user.idProofFileName
           : `id-proof/${user._id}/${user.idProofFileName}`;
         await deleteFromS3(existingKey);
         console.log(`🗑️ ID Proof: Deleted existing file for ${user.email}`);
@@ -107,12 +127,6 @@ export const uploadIdProof = async (req: Request, res: Response, next: NextFunct
 
     // Upload to S3
     const uploadResult = await uploadToS3(req.file, fileName);
-
-    // Track if this is a re-upload for an already-approved professional
-    const wasApproved = user.professionalStatus === 'approved';
-    const hadPreviousId = !!user.idProofUrl;
-    const previousIdProofUrl = user.idProofUrl;
-    const previousIdProofFileName = user.idProofFileName;
 
     // Update user record
     user.idProofUrl = uploadResult.url;
@@ -541,22 +555,13 @@ export const submitForVerification = async (req: Request, res: Response, next: N
 // Update phone number
 export const updatePhone = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { phone } = req.body;
+    const rawPhone = req.body.phone;
+    const phone = typeof rawPhone === 'string' ? rawPhone.trim() : String(rawPhone || '').trim();
 
-    if (!phone || typeof phone !== 'string') {
+    if (!phone) {
       return res.status(400).json({
         success: false,
         msg: "Phone number is required"
-      });
-    }
-
-    const trimmedPhone = phone.trim();
-
-    // Basic phone format validation (international format)
-    if (!/^\+?[1-9]\d{6,14}$/.test(trimmedPhone)) {
-      return res.status(400).json({
-        success: false,
-        msg: "Invalid phone number format. Use international format (e.g., +32123456789)"
       });
     }
 
@@ -585,8 +590,48 @@ export const updatePhone = async (req: Request, res: Response, next: NextFunctio
       });
     }
 
+    // Determine default region for phone parsing (needs 2-letter ISO code)
+    const rawCountry = user.businessInfo?.country || user.location?.country;
+    const defaultRegion = rawCountry
+      ? (rawCountry.length === 2 ? rawCountry.toUpperCase() : getCountryCode(rawCountry))
+      : undefined;
+
+    // Normalize and validate phone using google-libphonenumber
+    let normalizedPhone: string;
+    try {
+      let number;
+      if (phone.startsWith('+')) {
+        // International format — parse directly, no region needed
+        number = phoneUtil.parseAndKeepRawInput(phone, '');
+      } else if (defaultRegion) {
+        // Local format with known region
+        number = phoneUtil.parseAndKeepRawInput(phone, defaultRegion);
+      } else {
+        // Fallback: `defaultRegion` is undefined and `phone` doesn't start with '+'.
+        // Auto-prefix '+' so phoneUtil.parseAndKeepRawInput can attempt E.164 parsing.
+        // This means digit-only input like "12125551234" becomes "+12125551234" and may
+        // resolve to a valid PhoneNumberFormat.E164 number — convenient for users who
+        // omit the '+', but could also silently accept unintended country-code combos.
+        number = phoneUtil.parseAndKeepRawInput('+' + phone, '');
+      }
+
+      if (!phoneUtil.isValidNumber(number)) {
+        return res.status(400).json({
+          success: false,
+          msg: "Invalid phone number. Please include your country code (e.g. +1 for US, +31 for NL)."
+        });
+      }
+
+      normalizedPhone = phoneUtil.format(number, PhoneNumberFormat.E164);
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        msg: "Invalid phone number. Please include your country code (e.g. +1 for US, +31 for NL)."
+      });
+    }
+
     // Check if same as current
-    if (user.phone === trimmedPhone) {
+    if (user.phone === normalizedPhone) {
       return res.status(400).json({
         success: false,
         msg: "New phone number is the same as the current one"
@@ -594,7 +639,7 @@ export const updatePhone = async (req: Request, res: Response, next: NextFunctio
     }
 
     // Check uniqueness
-    const existingUser = await User.findOne({ phone: trimmedPhone, _id: { $ne: user._id } });
+    const existingUser = await User.findOne({ phone: normalizedPhone, _id: { $ne: user._id } });
     if (existingUser) {
       return res.status(409).json({
         success: false,
@@ -602,10 +647,23 @@ export const updatePhone = async (req: Request, res: Response, next: NextFunctio
       });
     }
 
-    user.phone = trimmedPhone;
+    user.phone = normalizedPhone;
     user.isPhoneVerified = false;
-    await user.save();
 
+    try {
+      await user.save();
+    } catch (error: any) {
+      // Handle concurrent duplicate key error
+      if (error.code === 11000) {
+        return res.status(409).json({
+          success: false,
+          msg: "This phone number is already in use"
+        });
+      }
+      throw error;
+    }
+
+    console.log(`📱 Phone: Updated phone for userId=${String(user._id)}`);
 
     return res.status(200).json({
       success: true,
@@ -618,22 +676,6 @@ export const updatePhone = async (req: Request, res: Response, next: NextFunctio
 
   } catch (error: any) {
     console.error('Update phone error:', error);
-
-    const isDuplicateKeyError = !!error && (
-      (error.name === 'MongoServerError' && error.code === 11000) ||
-      error.code === 11000 ||
-      error.codeName === 'DuplicateKey'
-    );
-    const isPhoneDuplicate = !!(error?.keyPattern?.phone || error?.keyValue?.phone) ||
-      (typeof error?.message === 'string' && error.message.includes('phone'));
-
-    if (isDuplicateKeyError && isPhoneDuplicate) {
-      return res.status(409).json({
-        success: false,
-        msg: "This phone number is already in use"
-      });
-    }
-
     return res.status(500).json({
       success: false,
       msg: "Failed to update phone number"
@@ -708,6 +750,7 @@ export const updateCustomerProfile = async (req: Request, res: Response, next: N
 
     await user.save();
 
+    console.log(`🏠 Customer Profile: Updated for ${String(user._id)}`);
     return res.status(200).json({
       success: true,
       msg: "Customer profile updated successfully",
@@ -820,6 +863,7 @@ export const updateIdInfo = async (req: Request, res: Response, next: NextFuncti
     await user.save();
 
     const changedFields = changes.map((change) => change.field);
+    console.log(`🔄 ID Info: Updated for userId=${String(user._id)}. Fields: ${changedFields.join(', ')}`);
 
     return res.status(200).json({
       success: true,
