@@ -7,7 +7,7 @@ import { generateOTP, sendOTPEmail, sendWelcomeEmail } from "../../utils/emailSe
 import twilio from 'twilio';
 import mongoose from "mongoose";
 import { buildBookingBlockedRanges } from "../../utils/bookingBlocks";
-import { formatVATNumber, isValidVATFormat } from "../../utils/viesApi";
+import { formatVATNumber, isValidVATFormat, validateVATNumber } from "../../utils/viesApi";
 
 // Helper function to set secure cookie
 const setTokenCookie = (res: Response, token: string) => {
@@ -39,8 +39,7 @@ export const SignUp = async (req: Request, res: Response, next: NextFunction) =>
       latitude,
       longitude,
       companyName,
-      vatNumber,
-      isVatValidated
+      vatNumber
     } = req.body;
 
     // Comprehensive validation
@@ -162,12 +161,10 @@ export const SignUp = async (req: Request, res: Response, next: NextFunction) =>
           });
         }
 
-        if (companyName) {
-          // Store company name in businessInfo for consistency
-          userData.businessInfo = {
-            companyName: companyName.trim()
-          };
-        }
+        // Store company name in businessInfo for consistency
+        userData.businessInfo = {
+          companyName: companyName.trim()
+        };
 
         if (!vatNumber) {
           return res.status(400).json({
@@ -185,7 +182,8 @@ export const SignUp = async (req: Request, res: Response, next: NextFunction) =>
         }
 
         userData.vatNumber = formattedVAT;
-        userData.isVatVerified = isVatValidated || false;
+        const viesValidationResult = await validateVATNumber(formattedVAT);
+        userData.isVatVerified = viesValidationResult.valid;
       }
     }
 
