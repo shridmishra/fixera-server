@@ -39,10 +39,6 @@ const toHours = (value: number, unit: "hours" | "days"): number => {
   return unit === "hours" ? value : value * HOURS_PER_DAY;
 };
 
-const toDays = (value: number, unit: "hours" | "days"): number => {
-  return unit === "days" ? value : value / HOURS_PER_DAY;
-};
-
 const getWeekdayKey = (date: Date): keyof NonNullable<IUser["availability"]> => {
   const day = date.getDay();
   switch (day) {

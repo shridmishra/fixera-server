@@ -15,6 +15,7 @@ async function dedupeStripeAccountIds(apply = false) {
 
   const duplicates = await User.aggregate([
     { $match: { "stripe.accountId": { $exists: true, $ne: null } } },
+    { $sort: { createdAt: 1, _id: 1 } },
     {
       $group: {
         _id: "$stripe.accountId",
@@ -44,9 +45,7 @@ async function dedupeStripeAccountIds(apply = false) {
       await User.updateMany(
         { _id: { $in: duplicateUserIds } },
         {
-          $set: {
-            stripe: undefined,
-          },
+          $unset: { stripe: "" },
         }
       );
       console.log(`Cleared stripe field for ${duplicateUserIds.length} duplicate users.`);
@@ -72,4 +71,3 @@ if (require.main === module) {
 }
 
 export { dedupeStripeAccountIds };
-

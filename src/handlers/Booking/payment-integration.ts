@@ -134,7 +134,7 @@ export const respondToQuoteWithPayment = async (req: Request, res: Response) => 
       success: false,
       error: {
         code: 'SERVER_ERROR',
-        message: error.message || 'Failed to process response'
+        message: 'Failed to process request'
       }
     });
   }
@@ -284,7 +284,7 @@ export const updateBookingStatusWithPayment = async (req: Request, res: Response
       success: false,
       error: {
         code: 'SERVER_ERROR',
-        message: error.message || 'Failed to update status'
+        message: 'Failed to process request'
       }
     });
   }
@@ -389,7 +389,7 @@ export const ensurePaymentIntent = async (req: Request, res: Response) => {
       success: false,
       error: {
         code: 'SERVER_ERROR',
-        message: error.message || 'Failed to initialize payment'
+        message: 'Failed to process request'
       }
     });
   }

@@ -189,7 +189,7 @@ export const createConnectAccount = async (req: Request, res: Response) => {
       success: false,
       error: {
         code: 'STRIPE_ERROR',
-        message: error.message || 'Failed to create Stripe account'
+        message: 'Failed to create Stripe account'
       }
     });
   }
@@ -243,7 +243,7 @@ export const createOnboardingLink = async (req: Request, res: Response) => {
       success: false,
       error: {
         code: 'STRIPE_ERROR',
-        message: error.message || 'Failed to create onboarding link'
+        message: 'Failed to create onboarding link'
       }
     });
   }
@@ -309,7 +309,7 @@ export const getAccountStatus = async (req: Request, res: Response) => {
       success: false,
       error: {
         code: 'STRIPE_ERROR',
-        message: error.message || 'Failed to fetch account status'
+        message: 'Failed to fetch account status'
       }
     });
   }
@@ -353,7 +353,7 @@ export const createDashboardLink = async (req: Request, res: Response) => {
       success: false,
       error: {
         code: 'STRIPE_ERROR',
-        message: error.message || 'Failed to create dashboard link'
+        message: 'Failed to create dashboard link'
       }
     });
   }

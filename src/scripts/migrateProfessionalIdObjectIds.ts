@@ -28,6 +28,7 @@ async function migrateProfessionalIdsToObjectIds() {
   }
   const projects = db.collection("projects");
   const meetings = db.collection("meetings");
+  const BATCH_SIZE = 500;
 
   let projectUpdated = 0;
   let projectSkippedInvalid = 0;
@@ -38,6 +39,7 @@ async function migrateProfessionalIdsToObjectIds() {
     { professionalId: { $exists: true } },
     { projection: { professionalId: 1 } }
   );
+  let projectOps: any[] = [];
 
   for await (const project of projectCursor) {
     const converted = toObjectId(project.professionalId);
@@ -51,15 +53,32 @@ async function migrateProfessionalIdsToObjectIds() {
     }
 
     if (!(project.professionalId instanceof mongoose.Types.ObjectId)) {
-      await projects.updateOne({ _id: project._id }, { $set: { professionalId: converted } });
-      projectUpdated++;
+      projectOps.push({
+        updateOne: {
+          filter: { _id: project._id },
+          update: { $set: { professionalId: converted } },
+        },
+      });
+
+      if (projectOps.length >= BATCH_SIZE) {
+        const result = await projects.bulkWrite(projectOps, { ordered: false });
+        projectUpdated += result.modifiedCount;
+        projectOps = [];
+      }
     }
+  }
+
+  if (projectOps.length > 0) {
+    const result = await projects.bulkWrite(projectOps, { ordered: false });
+    projectUpdated += result.modifiedCount;
+    projectOps = [];
   }
 
   const meetingCursor = meetings.find(
     { professionalId: { $exists: true } },
     { projection: { professionalId: 1 } }
   );
+  let meetingOps: any[] = [];
 
   for await (const meeting of meetingCursor) {
     const converted = toObjectId(meeting.professionalId);
@@ -73,9 +92,25 @@ async function migrateProfessionalIdsToObjectIds() {
     }
 
     if (!(meeting.professionalId instanceof mongoose.Types.ObjectId)) {
-      await meetings.updateOne({ _id: meeting._id }, { $set: { professionalId: converted } });
-      meetingUpdated++;
+      meetingOps.push({
+        updateOne: {
+          filter: { _id: meeting._id },
+          update: { $set: { professionalId: converted } },
+        },
+      });
+
+      if (meetingOps.length >= BATCH_SIZE) {
+        const result = await meetings.bulkWrite(meetingOps, { ordered: false });
+        meetingUpdated += result.modifiedCount;
+        meetingOps = [];
+      }
     }
+  }
+
+  if (meetingOps.length > 0) {
+    const result = await meetings.bulkWrite(meetingOps, { ordered: false });
+    meetingUpdated += result.modifiedCount;
+    meetingOps = [];
   }
 
   console.log("Migration complete:");

@@ -19,7 +19,11 @@ const roundToTwo = (value: number): number => Math.round(value * 100) / 100;
  * @param amount - Amount in major currency units (e.g., 100.50 EUR)
  * @returns Amount in cents (e.g., 10050)
  */
-export function convertToStripeAmount(amount: number): number {
+export function convertToStripeAmount(amount: number, currency: string = "EUR"): number {
+  const currencyUpper = currency.toUpperCase();
+  if (ZERO_DECIMAL_CURRENCIES.has(currencyUpper)) {
+    return amount;
+  }
   return Math.round(amount * 100);
 }
 
@@ -290,7 +294,7 @@ export function buildPaymentMetadata(
   professionalStripeAccountId: string,
   environment: 'production' | 'test' = process.env.NODE_ENV === 'production' ? 'production' : 'test'
 ): Record<string, string> {
-  const computedEnv = environment || (process.env.NODE_ENV === 'production' ? 'production' : 'test');
+  const computedEnv = environment;
   return {
     bookingId,
     bookingNumber,
@@ -317,7 +321,7 @@ export function buildTransferMetadata(
   payoutDate: string,
   environment: 'production' | 'test' = process.env.NODE_ENV === 'production' ? 'production' : 'test'
 ): Record<string, string> {
-  const computedEnv = environment || (process.env.NODE_ENV === 'production' ? 'production' : 'test');
+  const computedEnv = environment;
   return {
     bookingId,
     bookingNumber,

@@ -361,22 +361,28 @@ async function handleDisputeCreated(dispute: Stripe.Dispute) {
   booking.payment.refundNotes = `Dispute ${dispute.id} opened. Amount pending: ${disputeAmount} ${String(dispute.currency).toUpperCase()}. Status: ${dispute.status}`;
   await booking.save();
 
-  await Payment.findOneAndUpdate(
-    { booking: booking._id },
-    {
-      $set: {
-        status: 'disputed',
-        metadata: {
-          disputeId: dispute.id,
-          disputeReason: dispute.reason || 'unknown',
-          disputeAmountPending: disputeAmount,
-          disputeStatus: dispute.status,
-          disputeOpenedAt: booking.payment.disputeOpenedAt,
+  const existingPayment = await Payment.findOne({ booking: booking._id }).select("_id");
+  if (existingPayment) {
+    await Payment.findOneAndUpdate(
+      { booking: booking._id },
+      {
+        $set: {
+          status: 'disputed',
+          metadata: {
+            disputeId: dispute.id,
+            disputeReason: dispute.reason || 'unknown',
+            disputeAmountPending: disputeAmount,
+            disputeStatus: dispute.status,
+            disputeOpenedAt: booking.payment.disputeOpenedAt,
+          },
         },
-      },
-    },
-    { upsert: true }
-  );
+      }
+    );
+  } else {
+    console.error(
+      `[WEBHOOK][DISPUTE] Missing Payment record for booking ${booking._id}; skipped Payment update for dispute ${dispute.id}`
+    );
+  }
 
   console.error(
     `DISPUTE CREATED for booking ${booking._id}: ${dispute.id} - Amount pending: ${disputeAmount} ${String(dispute.currency).toUpperCase()} - Reason: ${dispute.reason}`
@@ -419,30 +425,36 @@ async function handleDisputeClosed(dispute: Stripe.Dispute) {
     booking.status = 'refunded';
     await booking.save();
 
-    await Payment.findOneAndUpdate(
-      { booking: booking._id },
-      {
-        $set: {
-          status: 'refunded',
-          refundedAt: booking.payment.refundedAt,
-          metadata: {
-            disputeId: dispute.id,
-            disputeStatus: dispute.status,
+    const existingPayment = await Payment.findOne({ booking: booking._id }).select("_id");
+    if (existingPayment) {
+      await Payment.findOneAndUpdate(
+        { booking: booking._id },
+        {
+          $set: {
+            status: 'refunded',
+            refundedAt: booking.payment.refundedAt,
+            metadata: {
+              disputeId: dispute.id,
+              disputeStatus: dispute.status,
+            },
           },
-        },
-        $push: {
-          refunds: {
-            amount: disputeAmount,
-            reason: `Dispute lost: ${dispute.reason || 'unknown'}`,
-            refundId: dispute.id,
-            refundedAt: booking.payment.refundedAt || new Date(),
-            source: 'platform',
-            notes: `Dispute ${dispute.id} closed with status ${dispute.status}`,
+          $push: {
+            refunds: {
+              amount: disputeAmount,
+              reason: `Dispute lost: ${dispute.reason || 'unknown'}`,
+              refundId: dispute.id,
+              refundedAt: booking.payment.refundedAt || new Date(),
+              source: 'platform',
+              notes: `Dispute ${dispute.id} closed with status ${dispute.status}`,
+            },
           },
-        },
-      },
-      { upsert: true }
-    );
+        }
+      );
+    } else {
+      console.error(
+        `[WEBHOOK][DISPUTE] Missing Payment record for booking ${booking._id}; skipped refund record update for dispute ${dispute.id}`
+      );
+    }
 
     console.error(`DISPUTE LOST for booking ${booking._id}: ${dispute.id} - Status: ${dispute.status}`);
   }

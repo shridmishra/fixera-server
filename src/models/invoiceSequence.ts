@@ -7,7 +7,7 @@ export interface IInvoiceSequence extends Document {
 
 const InvoiceSequenceSchema = new Schema<IInvoiceSequence>(
   {
-    year: { type: Number, required: true, unique: true, index: true },
+    year: { type: Number, required: true, unique: true },
     value: { type: Number, required: true, default: 0 },
   },
   { timestamps: true }
@@ -16,4 +16,3 @@ const InvoiceSequenceSchema = new Schema<IInvoiceSequence>(
 const InvoiceSequence = model<IInvoiceSequence>("InvoiceSequence", InvoiceSequenceSchema);
 
 export default InvoiceSequence;
-

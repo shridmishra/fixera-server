@@ -218,7 +218,7 @@ export const createPaymentIntent = async (
 
     // Create Payment Intent with immediate charge
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: convertToStripeAmount(totalAmount),
+      amount: convertToStripeAmount(totalAmount, currency),
       currency: currency.toLowerCase(),
       payment_method_types: ['card'],
       metadata: buildPaymentMetadata(
@@ -309,7 +309,14 @@ export const createPaymentIntent = async (
 export const confirmPayment = async (req: Request, res: Response) => {
   try {
     const { bookingId, paymentIntentId } = req.body;
-    const userId = (req as any).user._id;
+    const userId = (req as any).user?._id?.toString();
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Authentication required' }
+      });
+    }
 
     if (typeof bookingId !== 'string' || !bookingId.trim()) {
       return res.status(400).json({
@@ -334,7 +341,7 @@ export const confirmPayment = async (req: Request, res: Response) => {
     }
 
     // Verify customer
-    if (booking.customer.toString() !== userId.toString()) {
+    if (booking.customer.toString() !== userId) {
       return res.status(403).json({
         success: false,
         error: { code: 'UNAUTHORIZED', message: 'Not authorized' }
@@ -467,8 +474,8 @@ export const captureAndTransferPayment = async (bookingId: string): Promise<{ su
       };
     }
 
-    let transferAmount = convertToStripeAmount(payoutMajorAmount);
     let transferCurrency = bookingCurrency;
+    let transferAmount = convertToStripeAmount(payoutMajorAmount, transferCurrency);
     let sourceTransaction: string | undefined;
 
     // If Stripe settled the charge in another currency (e.g., USD), source_transaction transfers
@@ -607,7 +614,14 @@ export const captureAndTransferPayment = async (bookingId: string): Promise<{ su
 export const refundPayment = async (req: Request, res: Response) => {
   try {
     const { bookingId, reason, amount } = req.body;
-    const userId = (req as any).user._id;
+    const userId = (req as any).user?._id?.toString();
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: { code: 'UNAUTHORIZED', message: 'Authentication required' }
+      });
+    }
 
     if (typeof bookingId !== 'string' || !bookingId.trim() || !mongoose.Types.ObjectId.isValid(bookingId)) {
       return res.status(400).json({
@@ -680,7 +694,9 @@ export const refundPayment = async (req: Request, res: Response) => {
     if (booking.payment.status === 'authorized') {
       const refund = await stripe.refunds.create({
         payment_intent: booking.payment.stripePaymentIntentId,
-        amount: normalizedAmount ? convertToStripeAmount(normalizedAmount) : undefined,
+        amount: normalizedAmount
+          ? convertToStripeAmount(normalizedAmount, booking.payment.currency || 'EUR')
+          : undefined,
       }, {
         idempotencyKey: generateIdempotencyKey({
           bookingId: booking._id.toString(),
@@ -730,7 +746,9 @@ export const refundPayment = async (req: Request, res: Response) => {
       // Create refund
       const refund = await stripe.refunds.create({
         payment_intent: booking.payment.stripePaymentIntentId,
-        amount: normalizedAmount ? convertToStripeAmount(normalizedAmount) : undefined,
+        amount: normalizedAmount
+          ? convertToStripeAmount(normalizedAmount, booking.payment.currency || 'EUR')
+          : undefined,
       }, {
         idempotencyKey: generateIdempotencyKey({
           bookingId: booking._id.toString(),
@@ -745,7 +763,9 @@ export const refundPayment = async (req: Request, res: Response) => {
           await stripe.transfers.createReversal(
             booking.payment.stripeTransferId,
             {
-              amount: normalizedAmount ? convertToStripeAmount(normalizedAmount) : undefined,
+              amount: normalizedAmount
+                ? convertToStripeAmount(normalizedAmount, booking.payment.currency || 'EUR')
+                : undefined,
               metadata: { reason, bookingId: booking._id.toString() }
             }
           );

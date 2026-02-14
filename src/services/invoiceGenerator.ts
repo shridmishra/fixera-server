@@ -183,11 +183,16 @@ export async function generateInvoicePDF(data: InvoiceData): Promise<Buffer> {
 
       // Service description
       doc.fontSize(12).text("SERVICE DESCRIPTION:", 50, 280);
+      const descriptionStartY = 300;
+      const descriptionWidth = 500;
+      doc.fontSize(10);
+      const descriptionHeight = doc.heightOfString(data.serviceDescription, {
+        width: descriptionWidth,
+      });
+      doc.text(data.serviceDescription, 50, descriptionStartY, { width: descriptionWidth });
 
-      doc.fontSize(10).text(data.serviceDescription, 50, 300, { width: 500 });
-
-      // Invoice table
-      const tableTop = 360;
+      // Invoice table (always rendered below the variable-height description)
+      const tableTop = Math.max(360, descriptionStartY + descriptionHeight + 20);
 
       doc
         .font("Helvetica-Bold")
@@ -331,4 +336,3 @@ export async function generateBookingInvoice(
     pdfBuffer,
   };
 }
-
