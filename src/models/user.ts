@@ -39,6 +39,12 @@ export interface IUser extends Document {
     // Customer-specific fields
     customerType?: CustomerType;
     businessName?: string; // For business customers
+    companyAddress?: {
+        address?: string;
+        city?: string;
+        country?: string;
+        postalCode?: string;
+    };
     location?: {
         type: 'Point';
         coordinates: [number, number]; // [longitude, latitude]
@@ -222,8 +228,9 @@ const UserSchema = new Schema({
     pendingIdChanges: {
         type: [{
             field: { type: String, required: true },
-            oldValue: { type: String, required: true },
-            newValue: { type: String, required: true }
+            // Empty strings are valid here to represent "(not set)" in audit history.
+            oldValue: { type: String, required: false, default: '' },
+            newValue: { type: String, required: false, default: '' }
         }],
         default: undefined
     },
@@ -451,6 +458,12 @@ const UserSchema = new Schema({
         trim: true,
         maxlength: 200
     },
+    companyAddress: {
+        address: { type: String, required: false, trim: true },
+        city: { type: String, required: false, trim: true },
+        country: { type: String, required: false, trim: true },
+        postalCode: { type: String, required: false, trim: true }
+    },
     customerType: {
         type: String,
         enum: ['individual', 'business'],
@@ -494,6 +507,7 @@ UserSchema.pre("save", function (next) {
     const isBusinessCustomer = this.role === "customer" && this.customerType === "business";
     if (!isBusinessCustomer) {
         this.set("businessName", undefined);
+        this.set("companyAddress", undefined);
     }
 
     if (this.role === "professional") {
@@ -535,6 +549,7 @@ UserSchema.pre("save", function (next) {
 
         // Customer-only fields
         this.set("customerType", undefined);
+        this.set("companyAddress", undefined);
         this.set("location", undefined);
         this.set("loyaltyPoints", undefined);
         this.set("loyaltyLevel", undefined);

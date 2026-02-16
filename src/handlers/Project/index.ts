@@ -489,6 +489,12 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
     // Track blocked members per date for multi-resource logic
     // Key: date ISO string (normalized to local midnight UTC), Value: Set of member IDs blocked on that date
     const dateBlockedMembers = new Map<string, Set<string>>();
+    // Track which members have FULL-DAY blocks (from blockedDates, not ranges)
+    const memberFullDayBlocked = new Map<string, Set<string>>(); // dateIso -> Set<memberId>
+    // Track actual blocked time ranges per member (for 4-hour threshold calculation)
+    const memberBlockedTimeRanges = new Map<string, Array<{ start: Date; end: Date }>>();
+    const PARTIAL_BLOCK_THRESHOLD = 4; // hours
+    const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
     // Helper to mark a member as blocked on a date
     const markMemberBlocked = (dateIso: string, memberId: string) => {
@@ -498,6 +504,28 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         dateBlockedMembers.set(dateKey, new Set());
       }
       dateBlockedMembers.get(dateKey)!.add(memberId);
+    };
+
+    // Helper to mark a member as having a full-day block on a date
+    const markMemberFullDayBlocked = (dateIso: string, memberId: string) => {
+      const dateKey = normalizeDateKey(dateIso);
+      if (!dateKey) return;
+      if (!memberFullDayBlocked.has(dateKey)) {
+        memberFullDayBlocked.set(dateKey, new Set());
+      }
+      memberFullDayBlocked.get(dateKey)!.add(memberId);
+      markMemberBlocked(dateIso, memberId);
+    };
+
+    // Helper to store a blocked time range for a member
+    const addMemberTimeRange = (startIso: string, endIso: string, memberId: string) => {
+      const start = new Date(startIso);
+      const end = new Date(endIso);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+      if (!memberBlockedTimeRanges.has(memberId)) {
+        memberBlockedTimeRanges.set(memberId, []);
+      }
+      memberBlockedTimeRanges.get(memberId)!.push({ start, end });
     };
 
     // Helper to expand a date range and mark member as blocked for each day
@@ -512,6 +540,9 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         return;
       }
 
+      // Store the actual time range for threshold calculation
+      addMemberTimeRange(startIso, endIso, memberId);
+
       // Convert to professional's timezone to get correct calendar days
       const startZoned = toZonedTime(start, timeZone);
       const endZoned = toZonedTime(end, timeZone);
@@ -525,6 +556,70 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         markMemberBlocked(cursor.toISOString(), memberId);
         cursor.setUTCDate(cursor.getUTCDate() + 1);
       }
+    };
+
+    // Compute blocked hours for a member on a specific day (within working hours)
+    const computeMemberBlockedHoursForDay = (memberId: string, dateIso: string): number => {
+      const ranges = memberBlockedTimeRanges.get(memberId);
+      if (!ranges || ranges.length === 0) return 0;
+
+      const dayUtc = new Date(dateIso);
+      const zonedDay = toZonedTime(dayUtc, timeZone);
+      const dayConfig = availability[DAY_NAMES[zonedDay.getUTCDay()]];
+      if (!dayConfig?.available || !dayConfig?.startTime || !dayConfig?.endTime) return Infinity;
+
+      const dateStr = dateIso.split('T')[0];
+      const workingStartMs = fromZonedTime(
+        new Date(Date.UTC(
+          parseInt(dateStr.slice(0, 4)), parseInt(dateStr.slice(5, 7)) - 1, parseInt(dateStr.slice(8, 10)),
+          parseInt(dayConfig.startTime.split(':')[0]), parseInt(dayConfig.startTime.split(':')[1]), 0
+        )),
+        timeZone
+      ).getTime();
+      const workingEndMs = fromZonedTime(
+        new Date(Date.UTC(
+          parseInt(dateStr.slice(0, 4)), parseInt(dateStr.slice(5, 7)) - 1, parseInt(dateStr.slice(8, 10)),
+          parseInt(dayConfig.endTime.split(':')[0]), parseInt(dayConfig.endTime.split(':')[1]), 0
+        )),
+        timeZone
+      ).getTime();
+
+      if (workingEndMs <= workingStartMs) return Infinity;
+
+      const dayStartMs = dayUtc.getTime();
+      const dayEndMs = dayStartMs + 24 * 60 * 60 * 1000;
+
+      const clamped = ranges
+        .map(range => {
+          const rangeStartMs = Math.max(range.start.getTime(), dayStartMs);
+          const rangeEndMs = Math.min(range.end.getTime(), dayEndMs);
+          if (rangeEndMs <= rangeStartMs) return null;
+          const start = Math.max(rangeStartMs, workingStartMs);
+          const end = Math.min(rangeEndMs, workingEndMs);
+          if (end <= start) return null;
+          return { start, end };
+        })
+        .filter((v): v is { start: number; end: number } => v !== null)
+        .sort((a, b) => a.start - b.start);
+
+      if (clamped.length === 0) return 0;
+
+      let totalMinutes = 0;
+      let currentStart = clamped[0].start;
+      let currentEnd = clamped[0].end;
+
+      for (let i = 1; i < clamped.length; i++) {
+        if (clamped[i].start <= currentEnd) {
+          currentEnd = Math.max(currentEnd, clamped[i].end);
+        } else {
+          totalMinutes += (currentEnd - currentStart) / (1000 * 60);
+          currentStart = clamped[i].start;
+          currentEnd = clamped[i].end;
+        }
+      }
+      totalMinutes += (currentEnd - currentStart) / (1000 * 60);
+
+      return totalMinutes / 60;
     };
 
     // Company blocked dates/ranges block ALL resources - add directly to allBlockedDates
@@ -597,7 +692,7 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
           const date = toIsoDate(blocked.date);
           if (!date) return;
           blockedCategories.personal.dates.push(date);
-          markMemberBlocked(date, memberId);
+          markMemberFullDayBlocked(date, memberId);
           // Add to debug info
           if (debugEnabled && teamMemberDebugInfo?.[memberId]) {
             teamMemberDebugInfo[memberId].personalBlockedDates.push(date);
@@ -856,12 +951,30 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
     }
 
     // Per-day blocking for multi-resource availability:
+    // - Uses the 4-hour threshold: a member is only considered "blocked" on a day
+    //   if they have a full-day block OR their blocked ranges within working hours >= 4 hours.
     // - If 100% overlap is required, block any day where not all resources are available.
     // - Otherwise, block only days where all resources are unavailable.
     if (useMultiResourceMode) {
       dateBlockedMembers.forEach((blockedMemberIds, dateIso) => {
-        const blockedCount = blockedMemberIds.size;
-        const availableResources = totalResources - blockedCount;
+        const fullDayBlocked = memberFullDayBlocked.get(dateIso);
+
+        // Count actually blocked members using 4-hour threshold
+        let actualBlockedCount = 0;
+        blockedMemberIds.forEach(memberId => {
+          // Full-day blocks always count
+          if (fullDayBlocked?.has(memberId)) {
+            actualBlockedCount++;
+            return;
+          }
+          // Range-based blocks: apply 4-hour threshold
+          const blockedHours = computeMemberBlockedHoursForDay(memberId, dateIso);
+          if (blockedHours >= PARTIAL_BLOCK_THRESHOLD) {
+            actualBlockedCount++;
+          }
+        });
+
+        const availableResources = totalResources - actualBlockedCount;
 
         if (requiresFullOverlap) {
           if (availableResources < totalResources) {
@@ -877,10 +990,27 @@ export const getProjectTeamAvailability = async (req: Request, res: Response) =>
         }
       });
     } else {
-      // strict mode - any blocked member blocks the date
+      // Single resource mode: also apply 4-hour threshold for range-based blocks
       dateBlockedMembers.forEach((blockedMemberIds, dateIso) => {
-        allBlockedDates.add(dateIso);
-        finalBlockedDateSet.add(dateIso);
+        const fullDayBlocked = memberFullDayBlocked.get(dateIso);
+
+        // Check if any member is actually blocked (full-day or >= 4 hours)
+        let hasActualBlock = false;
+        blockedMemberIds.forEach(memberId => {
+          if (fullDayBlocked?.has(memberId)) {
+            hasActualBlock = true;
+            return;
+          }
+          const blockedHours = computeMemberBlockedHoursForDay(memberId, dateIso);
+          if (blockedHours >= PARTIAL_BLOCK_THRESHOLD) {
+            hasActualBlock = true;
+          }
+        });
+
+        if (hasActualBlock) {
+          allBlockedDates.add(dateIso);
+          finalBlockedDateSet.add(dateIso);
+        }
       });
     }
 
