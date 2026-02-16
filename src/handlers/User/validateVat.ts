@@ -4,6 +4,45 @@ import User, { IUser } from "../../models/user";
 import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
 
+/**
+ * Helper function to parse company address from VIES API response
+ * Extracts address, postal code, and city from the address string
+ * Note: Assumes EU postal code format (4-5 digits). May not work for all countries.
+ */
+interface ParsedAddressComponents {
+  address?: string;
+  postalCode?: string;
+  city?: string;
+}
+
+const parseVIESAddress = (companyAddress: string): ParsedAddressComponents => {
+  const addressLines = companyAddress.split('\n').filter(line => line.trim());
+  const result: ParsedAddressComponents = {};
+
+  // First line is typically the street address
+  if (addressLines[0]) {
+    result.address = addressLines[0];
+  }
+
+  // Last line typically contains postal code and city (common EU format)
+  const lastLine = addressLines[addressLines.length - 1];
+  if (lastLine) {
+    const postalMatch = lastLine.match(/(\d{4,5})/);
+    const cityMatch = lastLine.match(/\d{4,5}\s+(.+)$/);
+    
+    if (postalMatch) {
+      result.postalCode = postalMatch[1];
+    }
+    
+    if (cityMatch) {
+      result.city = cityMatch[1].trim();
+    }
+  }
+
+  return result;
+};
+
+
 export const validateVAT = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { vatNumber } = req.body;
@@ -144,26 +183,18 @@ export const validateAndPopulateVAT = async (req: Request, res: Response, next: 
         }
 
         if (validationResult.companyAddress) {
-          // Parse address components
-          const addressLines = validationResult.companyAddress.split('\n').filter(line => line.trim());
+          const parsed = parseVIESAddress(validationResult.companyAddress);
           
-          if (!user.businessInfo.address && addressLines[0]) {
-            user.businessInfo.address = addressLines[0];
+          if (parsed.address && !user.businessInfo.address) {
+            user.businessInfo.address = parsed.address;
           }
-
-          // Extract postal code and city from last line (common EU format)
-          const lastLine = addressLines[addressLines.length - 1];
-          if (lastLine) {
-            const postalMatch = lastLine.match(/(\d{4,5})/);
-            const cityMatch = lastLine.match(/\d{4,5}\s+(.+)$/);
-            
-            if (postalMatch && !user.businessInfo.postalCode) {
-              user.businessInfo.postalCode = postalMatch[1];
-            }
-            
-            if (cityMatch && !user.businessInfo.city) {
-              user.businessInfo.city = cityMatch[1].trim();
-            }
+          
+          if (parsed.postalCode && !user.businessInfo.postalCode) {
+            user.businessInfo.postalCode = parsed.postalCode;
+          }
+          
+          if (parsed.city && !user.businessInfo.city) {
+            user.businessInfo.city = parsed.city;
           }
 
           // Set country from VAT number
@@ -179,6 +210,7 @@ export const validateAndPopulateVAT = async (req: Request, res: Response, next: 
 
         if (validationResult.companyAddress) {
           // Initialize location if not exists
+          // Note: Coordinates set to [0, 0] as placeholder - should be updated via geocoding if needed
           if (!user.location) {
             user.location = {
               type: 'Point',
@@ -188,26 +220,18 @@ export const validateAndPopulateVAT = async (req: Request, res: Response, next: 
             user.location.coordinates = [0, 0];
           }
 
-          // Parse address components
-          const addressLines = validationResult.companyAddress.split('\n').filter(line => line.trim());
+          const parsed = parseVIESAddress(validationResult.companyAddress);
           
-          if (!user.location.address && addressLines[0]) {
-            user.location.address = addressLines[0];
+          if (parsed.address && !user.location.address) {
+            user.location.address = parsed.address;
           }
-
-          // Extract postal code and city from last line (common EU format)
-          const lastLine = addressLines[addressLines.length - 1];
-          if (lastLine) {
-            const postalMatch = lastLine.match(/(\d{4,5})/);
-            const cityMatch = lastLine.match(/\d{4,5}\s+(.+)$/);
-            
-            if (postalMatch && !user.location.postalCode) {
-              user.location.postalCode = postalMatch[1];
-            }
-            
-            if (cityMatch && !user.location.city) {
-              user.location.city = cityMatch[1].trim();
-            }
+          
+          if (parsed.postalCode && !user.location.postalCode) {
+            user.location.postalCode = parsed.postalCode;
+          }
+          
+          if (parsed.city && !user.location.city) {
+            user.location.city = parsed.city;
           }
 
           // Set country from VAT number
