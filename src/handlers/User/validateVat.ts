@@ -7,7 +7,12 @@ import jwt from 'jsonwebtoken';
 /**
  * Helper function to parse company address from VIES API response
  * Extracts address, postal code, and city from the address string
- * Note: Assumes EU postal code format (4-5 digits). May not work for all countries.
+ * 
+ * Note: This assumes EU postal code format (4-5 digits on the last line).
+ * The regex matches sequences of 4-5 digits, which works for many EU countries
+ * but may not work for all countries (e.g., UK alphanumeric postcodes like SW1A 1AA).
+ * This limitation is inherited from the existing implementation for professionals.
+ * Consider enhancing with country-specific parsing if needed.
  */
 interface ParsedAddressComponents {
   address?: string;
@@ -24,9 +29,10 @@ const parseVIESAddress = (companyAddress: string): ParsedAddressComponents => {
     result.address = addressLines[0];
   }
 
-  // Last line typically contains postal code and city (common EU format)
+  // Last line typically contains postal code and city (common EU format: "1234 CityName")
   const lastLine = addressLines[addressLines.length - 1];
   if (lastLine) {
+    // Match 4-5 digit sequences (works for many EU countries)
     const postalMatch = lastLine.match(/(\d{4,5})/);
     const cityMatch = lastLine.match(/\d{4,5}\s+(.+)$/);
     
@@ -245,7 +251,18 @@ export const validateAndPopulateVAT = async (req: Request, res: Response, next: 
     await user.save();
     
     // Build response data based on user role
-    const responseData: any = {
+    interface VATValidationResponseData {
+      vatNumber: string;
+      isVatVerified: boolean;
+      companyName?: string;
+      companyAddress?: string;
+      autoPopulated: boolean;
+      businessInfo?: typeof user.businessInfo;
+      businessName?: string;
+      location?: typeof user.location;
+    }
+
+    const responseData: VATValidationResponseData = {
       vatNumber: formattedVAT,
       isVatVerified: validationResult.valid,
       companyName: validationResult.companyName,
