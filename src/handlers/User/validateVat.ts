@@ -105,8 +105,12 @@ export const validateAndPopulateVAT = async (req: Request, res: Response, next: 
       });
     }
 
-    if (user.role !== 'professional') {
-      console.log(`⚠️ PHASE 2: Non-professional user attempting VAT validation - Role: ${user.role}`);
+    // Check if user is a professional or business customer
+    if (user.role !== 'professional' && !(user.role === 'customer' && user.customerType === 'business')) {
+      return res.status(403).json({
+        success: false,
+        msg: "VAT validation with auto-populate is only available for professionals and business customers"
+      });
     }
 
     const formattedVAT = formatVATNumber(vatNumber);
@@ -128,58 +132,115 @@ export const validateAndPopulateVAT = async (req: Request, res: Response, next: 
     user.isVatVerified = validationResult.valid;
 
     // Auto-populate company information if requested and available
-    if (autoPopulate && validationResult.valid && user.role === 'professional') {
-      
-      if (!user.businessInfo) {
-        user.businessInfo = {};
-      }
-
-      if (validationResult.companyName && !user.businessInfo.companyName) {
-        user.businessInfo.companyName = validationResult.companyName;
-      }
-
-      if (validationResult.companyAddress) {
-        // Parse address components
-        const addressLines = validationResult.companyAddress.split('\n').filter(line => line.trim());
-        
-        if (!user.businessInfo.address && addressLines[0]) {
-          user.businessInfo.address = addressLines[0];
+    if (autoPopulate && validationResult.valid) {
+      if (user.role === 'professional') {
+        // For professionals, populate businessInfo
+        if (!user.businessInfo) {
+          user.businessInfo = {};
         }
 
-        // Extract postal code and city from last line (common EU format)
-        const lastLine = addressLines[addressLines.length - 1];
-        if (lastLine) {
-          const postalMatch = lastLine.match(/(\d{4,5})/);
-          const cityMatch = lastLine.match(/\d{4,5}\s+(.+)$/);
-          
-          if (postalMatch && !user.businessInfo.postalCode) {
-            user.businessInfo.postalCode = postalMatch[1];
-          }
-          
-          if (cityMatch && !user.businessInfo.city) {
-            user.businessInfo.city = cityMatch[1].trim();
-          }
+        if (validationResult.companyName && !user.businessInfo.companyName) {
+          user.businessInfo.companyName = validationResult.companyName;
         }
 
-        // Set country from VAT number
-        if (!user.businessInfo.country) {
-          user.businessInfo.country = formattedVAT.substring(0, 2);
+        if (validationResult.companyAddress) {
+          // Parse address components
+          const addressLines = validationResult.companyAddress.split('\n').filter(line => line.trim());
+          
+          if (!user.businessInfo.address && addressLines[0]) {
+            user.businessInfo.address = addressLines[0];
+          }
+
+          // Extract postal code and city from last line (common EU format)
+          const lastLine = addressLines[addressLines.length - 1];
+          if (lastLine) {
+            const postalMatch = lastLine.match(/(\d{4,5})/);
+            const cityMatch = lastLine.match(/\d{4,5}\s+(.+)$/);
+            
+            if (postalMatch && !user.businessInfo.postalCode) {
+              user.businessInfo.postalCode = postalMatch[1];
+            }
+            
+            if (cityMatch && !user.businessInfo.city) {
+              user.businessInfo.city = cityMatch[1].trim();
+            }
+          }
+
+          // Set country from VAT number
+          if (!user.businessInfo.country) {
+            user.businessInfo.country = formattedVAT.substring(0, 2);
+          }
+        }
+      } else if (user.role === 'customer' && user.customerType === 'business') {
+        // For business customers, populate businessName and location
+        if (validationResult.companyName && !user.businessName) {
+          user.businessName = validationResult.companyName;
+        }
+
+        if (validationResult.companyAddress) {
+          // Initialize location if not exists
+          if (!user.location) {
+            user.location = {
+              type: 'Point',
+              coordinates: [0, 0]
+            };
+          } else if (!user.location.coordinates || user.location.coordinates.length !== 2) {
+            user.location.coordinates = [0, 0];
+          }
+
+          // Parse address components
+          const addressLines = validationResult.companyAddress.split('\n').filter(line => line.trim());
+          
+          if (!user.location.address && addressLines[0]) {
+            user.location.address = addressLines[0];
+          }
+
+          // Extract postal code and city from last line (common EU format)
+          const lastLine = addressLines[addressLines.length - 1];
+          if (lastLine) {
+            const postalMatch = lastLine.match(/(\d{4,5})/);
+            const cityMatch = lastLine.match(/\d{4,5}\s+(.+)$/);
+            
+            if (postalMatch && !user.location.postalCode) {
+              user.location.postalCode = postalMatch[1];
+            }
+            
+            if (cityMatch && !user.location.city) {
+              user.location.city = cityMatch[1].trim();
+            }
+          }
+
+          // Set country from VAT number
+          if (!user.location.country) {
+            user.location.country = formattedVAT.substring(0, 2);
+          }
         }
       }
     }
 
     await user.save();
+    
+    // Build response data based on user role
+    const responseData: any = {
+      vatNumber: formattedVAT,
+      isVatVerified: validationResult.valid,
+      companyName: validationResult.companyName,
+      companyAddress: validationResult.companyAddress,
+      autoPopulated: autoPopulate && validationResult.valid
+    };
+
+    // Include role-specific data
+    if (user.role === 'professional') {
+      responseData.businessInfo = user.businessInfo;
+    } else if (user.role === 'customer' && user.customerType === 'business') {
+      responseData.businessName = user.businessName;
+      responseData.location = user.location;
+    }
+
     return res.status(200).json({
       success: true,
       msg: "VAT validated and information updated successfully",
-      data: {
-        vatNumber: formattedVAT,
-        isVatVerified: validationResult.valid,
-        companyName: validationResult.companyName,
-        companyAddress: validationResult.companyAddress,
-        autoPopulated: autoPopulate && validationResult.valid,
-        businessInfo: user.businessInfo
-      }
+      data: responseData
     });
 
   } catch (error: any) {
