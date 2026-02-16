@@ -753,7 +753,7 @@ export const updatePhone = async (req: Request, res: Response, next: NextFunctio
 // Update customer profile (address, business name for business customers)
 export const updateCustomerProfile = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { address, city, country, postalCode, businessName, customerType } = req.body;
+    const { address, city, country, postalCode, businessName, customerType, companyAddress } = req.body;
     const trimmedAddress = typeof address === 'string' ? address.trim() : undefined;
     const trimmedCity = typeof city === 'string' ? city.trim() : undefined;
     const trimmedCountry = typeof country === 'string' ? country.trim() : undefined;
@@ -821,9 +821,29 @@ export const updateCustomerProfile = async (req: Request, res: Response, next: N
       if (trimmedBusinessName !== undefined) {
         user.businessName = trimmedBusinessName.length > 0 ? trimmedBusinessName : undefined;
       }
+
+      // Update company address for business customers
+      if (companyAddress && typeof companyAddress === 'object') {
+        if (!user.companyAddress) {
+          user.companyAddress = {};
+        }
+        if (typeof companyAddress.address === 'string') {
+          user.companyAddress.address = companyAddress.address.trim() || undefined;
+        }
+        if (typeof companyAddress.city === 'string') {
+          user.companyAddress.city = companyAddress.city.trim() || undefined;
+        }
+        if (typeof companyAddress.country === 'string') {
+          user.companyAddress.country = companyAddress.country.trim() || undefined;
+        }
+        if (typeof companyAddress.postalCode === 'string') {
+          user.companyAddress.postalCode = companyAddress.postalCode.trim() || undefined;
+        }
+      }
     } else if (customerType && customerType !== 'business') {
       // If switching to individual, clear business fields
       user.businessName = undefined;
+      user.companyAddress = undefined;
       // We might also want to clear VAT if it was set, but that's handled separately or via another call?
       // For now, let's keep VAT separate as it has its own verification logic, but frontend should hide it.
       // Actually, per requirements "in case of business customer also VAT and business name",
@@ -840,6 +860,7 @@ export const updateCustomerProfile = async (req: Request, res: Response, next: N
       data: {
         location: user.location,
         businessName: user.businessName,
+        companyAddress: user.companyAddress,
         customerType: user.customerType
       }
     });
