@@ -4,6 +4,51 @@ import User, { IUser } from "../../models/user";
 import connecToDatabase from "../../config/db";
 import jwt from 'jsonwebtoken';
 
+/**
+ * Helper function to parse company address from VIES API response
+ * Extracts address, postal code, and city from the address string
+ * 
+ * Note: This assumes EU postal code format (4-5 digits on the last line).
+ * The regex matches sequences of 4-5 digits, which works for many EU countries
+ * but may not work for all countries (e.g., UK alphanumeric postcodes like SW1A 1AA).
+ * This limitation is inherited from the existing implementation for professionals.
+ * Consider enhancing with country-specific parsing if needed.
+ */
+interface ParsedAddressComponents {
+  address?: string;
+  postalCode?: string;
+  city?: string;
+}
+
+const parseVIESAddress = (companyAddress: string): ParsedAddressComponents => {
+  const addressLines = companyAddress.split('\n').filter(line => line.trim());
+  const result: ParsedAddressComponents = {};
+
+  // First line is typically the street address
+  if (addressLines[0]) {
+    result.address = addressLines[0];
+  }
+
+  // Last line typically contains postal code and city (common EU format: "1234 CityName")
+  const lastLine = addressLines[addressLines.length - 1];
+  if (lastLine) {
+    // Match 4-5 digit sequences (works for many EU countries)
+    const postalMatch = lastLine.match(/(\d{4,5})/);
+    const cityMatch = lastLine.match(/\d{4,5}\s+(.+)$/);
+    
+    if (postalMatch) {
+      result.postalCode = postalMatch[1];
+    }
+    
+    if (cityMatch) {
+      result.city = cityMatch[1].trim();
+    }
+  }
+
+  return result;
+};
+
+
 export const validateVAT = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { vatNumber } = req.body;
@@ -105,8 +150,12 @@ export const validateAndPopulateVAT = async (req: Request, res: Response, next: 
       });
     }
 
-    if (user.role !== 'professional') {
-      console.log(`⚠️ PHASE 2: Non-professional user attempting VAT validation - Role: ${user.role}`);
+    // Check if user is a professional or business customer
+    if (user.role !== 'professional' && !(user.role === 'customer' && user.customerType === 'business')) {
+      return res.status(403).json({
+        success: false,
+        msg: "VAT validation with auto-populate is only available for professionals and business customers"
+      });
     }
 
     const formattedVAT = formatVATNumber(vatNumber);
@@ -128,58 +177,111 @@ export const validateAndPopulateVAT = async (req: Request, res: Response, next: 
     user.isVatVerified = validationResult.valid;
 
     // Auto-populate company information if requested and available
-    if (autoPopulate && validationResult.valid && user.role === 'professional') {
-      
-      if (!user.businessInfo) {
-        user.businessInfo = {};
-      }
-
-      if (validationResult.companyName && !user.businessInfo.companyName) {
-        user.businessInfo.companyName = validationResult.companyName;
-      }
-
-      if (validationResult.companyAddress) {
-        // Parse address components
-        const addressLines = validationResult.companyAddress.split('\n').filter(line => line.trim());
-        
-        if (!user.businessInfo.address && addressLines[0]) {
-          user.businessInfo.address = addressLines[0];
+    if (autoPopulate && validationResult.valid) {
+      if (user.role === 'professional') {
+        // For professionals, populate businessInfo
+        if (!user.businessInfo) {
+          user.businessInfo = {};
         }
 
-        // Extract postal code and city from last line (common EU format)
-        const lastLine = addressLines[addressLines.length - 1];
-        if (lastLine) {
-          const postalMatch = lastLine.match(/(\d{4,5})/);
-          const cityMatch = lastLine.match(/\d{4,5}\s+(.+)$/);
-          
-          if (postalMatch && !user.businessInfo.postalCode) {
-            user.businessInfo.postalCode = postalMatch[1];
-          }
-          
-          if (cityMatch && !user.businessInfo.city) {
-            user.businessInfo.city = cityMatch[1].trim();
-          }
+        if (validationResult.companyName && !user.businessInfo.companyName) {
+          user.businessInfo.companyName = validationResult.companyName;
         }
 
-        // Set country from VAT number
-        if (!user.businessInfo.country) {
-          user.businessInfo.country = formattedVAT.substring(0, 2);
+        if (validationResult.companyAddress) {
+          const parsed = parseVIESAddress(validationResult.companyAddress);
+          
+          if (parsed.address && !user.businessInfo.address) {
+            user.businessInfo.address = parsed.address;
+          }
+          
+          if (parsed.postalCode && !user.businessInfo.postalCode) {
+            user.businessInfo.postalCode = parsed.postalCode;
+          }
+          
+          if (parsed.city && !user.businessInfo.city) {
+            user.businessInfo.city = parsed.city;
+          }
+
+          // Set country from VAT number
+          if (!user.businessInfo.country) {
+            user.businessInfo.country = formattedVAT.substring(0, 2);
+          }
+        }
+      } else if (user.role === 'customer' && user.customerType === 'business') {
+        // For business customers, populate businessName and location
+        if (validationResult.companyName && !user.businessName) {
+          user.businessName = validationResult.companyName;
+        }
+
+        if (validationResult.companyAddress) {
+          // Initialize location if not exists
+          // Note: Coordinates set to [0, 0] as placeholder - should be updated via geocoding if needed
+          if (!user.location) {
+            user.location = {
+              type: 'Point',
+              coordinates: [0, 0]
+            };
+          } else if (!user.location.coordinates || user.location.coordinates.length !== 2) {
+            user.location.coordinates = [0, 0];
+          }
+
+          const parsed = parseVIESAddress(validationResult.companyAddress);
+          
+          if (parsed.address && !user.location.address) {
+            user.location.address = parsed.address;
+          }
+          
+          if (parsed.postalCode && !user.location.postalCode) {
+            user.location.postalCode = parsed.postalCode;
+          }
+          
+          if (parsed.city && !user.location.city) {
+            user.location.city = parsed.city;
+          }
+
+          // Set country from VAT number
+          if (!user.location.country) {
+            user.location.country = formattedVAT.substring(0, 2);
+          }
         }
       }
     }
 
     await user.save();
+    
+    // Build response data based on user role
+    interface VATValidationResponseData {
+      vatNumber: string;
+      isVatVerified: boolean;
+      companyName?: string;
+      companyAddress?: string;
+      autoPopulated: boolean;
+      businessInfo?: typeof user.businessInfo;
+      businessName?: string;
+      location?: typeof user.location;
+    }
+
+    const responseData: VATValidationResponseData = {
+      vatNumber: formattedVAT,
+      isVatVerified: validationResult.valid,
+      companyName: validationResult.companyName,
+      companyAddress: validationResult.companyAddress,
+      autoPopulated: autoPopulate && validationResult.valid
+    };
+
+    // Include role-specific data
+    if (user.role === 'professional') {
+      responseData.businessInfo = user.businessInfo;
+    } else if (user.role === 'customer' && user.customerType === 'business') {
+      responseData.businessName = user.businessName;
+      responseData.location = user.location;
+    }
+
     return res.status(200).json({
       success: true,
       msg: "VAT validated and information updated successfully",
-      data: {
-        vatNumber: formattedVAT,
-        isVatVerified: validationResult.valid,
-        companyName: validationResult.companyName,
-        companyAddress: validationResult.companyAddress,
-        autoPopulated: autoPopulate && validationResult.valid,
-        businessInfo: user.businessInfo
-      }
+      data: responseData
     });
 
   } catch (error: any) {
