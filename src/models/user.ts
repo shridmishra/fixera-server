@@ -26,9 +26,9 @@ export interface IUser extends Document {
     idExpirationDate?: Date;
     idExpiryEmailSentAt?: Date;
     pendingIdChanges?: {
-        field: string;
-        oldValue: string;
-        newValue: string;
+        field?: string;
+        oldValue?: string;
+        newValue?: string;
     }[];
     professionalId?: string;
     // Professional approval fields
