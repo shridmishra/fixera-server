@@ -447,7 +447,7 @@ const ServiceSelectionSchema = new Schema<IServiceSelection>({
 const ProjectSchema = new Schema<IProject>(
   {
     // Step 1: Basic Info
-    professionalId: { type: String, required: true },
+    professionalId: { type: String, ref: 'User', required: true },
     category: { type: String, required: true },
     service: { type: String, required: true },
     areaOfWork: { type: String },
