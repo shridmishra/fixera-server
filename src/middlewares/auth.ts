@@ -129,7 +129,7 @@ export const authMiddleware = (allowedRoles: string[]) => {
       if (user.role === 'professional') {
         (req.user as any) = {
           ...user.toObject(),
-          professionalId: String(user._id)
+          professionalId: user._id
         };
       } else {
         req.user = user;

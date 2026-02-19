@@ -168,7 +168,7 @@ export interface IProject extends Document {
   minOverlapPercentage?: number;
 
   // Step 1: Basic Info
-  professionalId: Schema.Types.ObjectId | string;
+  professionalId: Types.ObjectId | string;
   category: string; // Kept for backwards compatibility (primary category)
   service: string; // Kept for backwards compatibility (primary service)
   areaOfWork?: string;
