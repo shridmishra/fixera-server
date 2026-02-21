@@ -29,6 +29,10 @@ import {
   getServicesByCategory
 } from "../../handlers/Admin/serviceConfigurationManagement";
 import { getPayments, capturePayment } from "../../handlers/Admin/payments";
+import {
+  getPlatformSettings,
+  updatePlatformSettings,
+} from "../../handlers/Admin/platformSettings";
 
 const adminRouter = Router();
 
@@ -64,5 +68,8 @@ adminRouter.route('/service-configurations/:id').delete(deleteServiceConfigurati
 adminRouter.route('/service-configurations/:id/toggle-active').patch(toggleServiceConfigurationActive);
 adminRouter.route('/payments').get(getPayments);
 adminRouter.route('/payments/:paymentId/capture').post(capturePayment);
+
+// Platform settings routes
+adminRouter.route('/platform-settings').get(getPlatformSettings).put(updatePlatformSettings);
 
 export default adminRouter;

@@ -14,6 +14,7 @@ import {
   generateIdempotencyKey,
   convertToStripeAmount,
   calculateProfessionalPayout,
+  calculatePlatformCommission,
   calculateStripeFee,
   validatePaymentAmount,
   buildPaymentMetadata,
@@ -21,6 +22,7 @@ import {
   determineBookingCurrency,
 } from '../../utils/payment';
 import { calculateVAT } from '../../utils/vat';
+import PlatformSettings from '../../models/platformSettings';
 
 const extractParticipantIds = (booking: any, professionalOverride?: any) => {
   const customerId = (booking.customer as any)?._id || booking.customer;
@@ -212,7 +214,18 @@ export const createPaymentIntent = async (
       return { success: false, error: { code: 'INVALID_AMOUNT', message: amountValidation.error! } };
     }
 
-    const platformCommission = (totalAmount * STRIPE_CONFIG.commissionPercent) / 100;
+    // Fetch commission rate from DB with env var fallback
+    let commissionPercent: number;
+    try {
+      const platformConfig = await PlatformSettings.getCurrentConfig();
+      commissionPercent = platformConfig.commissionPercent;
+    } catch (configError) {
+      console.warn('Failed to fetch platform config from DB, falling back to env var:', configError);
+      const parsed = Number.parseFloat(process.env.STRIPE_PLATFORM_COMMISSION_PERCENT || '0');
+      commissionPercent = Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    const platformCommission = calculatePlatformCommission(totalAmount, commissionPercent);
     const professionalPayout = totalAmount - platformCommission;
     const stripeFee = calculateStripeFee(totalAmount, currency);
 
